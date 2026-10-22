@@ -25,9 +25,11 @@ export class Flap {
   constructor() {
     this.cells = new Map();
     this.sweptAt = 0;
+    this.enabled = true; // false draws text plainly, with no scramble
   }
 
   draw(m, key, text, x, y, color, now, opts = {}) {
+    if (!this.enabled) return m.text(text, x, y, color, opts);
     let cell = this.cells.get(key);
     if (!cell || cell.target !== text) {
       const prev = cell?.target ?? '';
@@ -95,13 +97,13 @@ const TINTS = {
  * LED colour, rainbow repaints everything with a travelling hue, and every
  * so often a soft highlight sweeps across the whole board.
  */
-export function shade(m, theme, now) {
+export function shade(m, theme, now, shine = true) {
   const { buf, cols, rows } = m;
   const tint = TINTS[theme];
   const sweepPeriod = 22000;
   const sweepT = (now % sweepPeriod) / 1600; // sweep lasts 1.6s of each period
   const sweepPos = sweepT * (cols + rows) * 1.4 - rows;
-  const sweeping = sweepT < 1;
+  const sweeping = shine && sweepT < 1;
 
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {

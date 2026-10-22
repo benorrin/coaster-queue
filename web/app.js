@@ -2,10 +2,11 @@ import { Matrix } from './led.js';
 import { Feed } from './data.js';
 import { drawBoard } from './board.js';
 import { bootWipe, shade } from './fx.js';
-import { readSettings, setupControls } from './controls.js';
+import { setupControls } from './controls.js';
+import { load } from './settings.js';
 
 const params = new URLSearchParams(location.search);
-const settings = readSettings(params);
+const settings = load(params);
 const demo = params.has('demo');
 
 const matrix = new Matrix(document.getElementById('board'), settings.cols);
@@ -35,7 +36,7 @@ function frame(now) {
 
   matrix.clear();
   drawBoard(matrix, state);
-  shade(matrix, state.theme, now);
+  shade(matrix, state.theme, now, state.shine);
   bootWipe(matrix, now);
   matrix.present(state.brightness);
   requestAnimationFrame(frame);

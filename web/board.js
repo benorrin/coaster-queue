@@ -65,10 +65,11 @@ function scrollOffset(overflow, t) {
   return -Math.min(overflow, Math.max(0, (u - SCROLL_HOLD) * SCROLL_SPEED));
 }
 
-function drawBar(m, key, x, y, w, mins, now) {
+function drawBar(m, key, x, y, w, mins, now, gradient) {
   const fill = ease.get(key, (Math.min(mins, MAX_WAIT) / MAX_WAIT) * w, now);
   for (let i = 0; i < w; i++) {
-    const c = waitColor((i / (w - 1)) * MAX_WAIT);
+    // With gradients off the whole bar is the colour of the current wait.
+    const c = waitColor(gradient ? (i / (w - 1)) * MAX_WAIT : mins);
     const on = Math.max(0, Math.min(1, fill - i));
     m.rect(x + i, y, 1, 3, mix(scale(c, 0.1), c, on));
   }
@@ -99,13 +100,13 @@ function drawRide(m, ride, key, x0, w, y, state) {
   const pulse = ride.wait_time >= 50 ? 0.75 + 0.25 * Math.sin(now / 170) : 1;
   const c = scale(waitColor(ride.wait_time), pulse);
   flap.draw(m, `${key}.n`, name, nameX + offset, y, WHITE, now, nameOpts);
-  if (barW) drawBar(m, `${key}.b`, barX, y + 2, barW, ride.wait_time, now);
+  if (barW) drawBar(m, `${key}.b`, barX, y + 2, barW, ride.wait_time, now, state.gradients);
   if (ride.trend) m.text(ride.trend > 0 ? '▲' : '▼', arrowX, y, ride.trend > 0 ? RED : [40, 255, 90]);
   const label = ride.wait_time === 0 ? 'WALK' : `${ride.wait_time}M`;
   flap.draw(m, `${key}.w`, label, right - textWidth(label), y, c, now);
 }
 
-function drawHeader(m, park, accent, x0, w, progress) {
+function drawHeader(m, park, accent, x0, w, progress, gradient) {
   const name = normalise(park.name);
   const open = park.rides.filter((r) => r.is_open);
   // Double-height title only when it leaves room for the stats block beside it.
@@ -125,13 +126,13 @@ function drawHeader(m, park, accent, x0, w, progress) {
   // Rule under the header doubles as the page-dwell progress bar.
   const lit = Math.round((w - 2 * PAD) * progress);
   for (let i = 0; i < w - 2 * PAD; i++) {
-    const c = mix(accent, hsv(210, 0.5, 1), i / (w - 2 * PAD));
+    const c = gradient ? mix(accent, hsv(210, 0.5, 1), i / (w - 2 * PAD)) : accent;
     m.px(x0 + PAD + i, RULE_Y, i < lit ? c : scale(c, 0.15));
   }
 }
 
 function drawPanel(m, park, slide, accent, x0, w, progress, state) {
-  drawHeader(m, park, accent, x0, w, progress);
+  drawHeader(m, park, accent, x0, w, progress, state.gradients);
   if (!park.fetched_at) {
     m.text(park.error ? 'NO DATA' : 'LOADING', x0 + PAD, ROWS_Y + 2, park.error ? RED : DIM);
     return;
@@ -163,7 +164,8 @@ function drawFooter(m, state, slide) {
   const date = new Date();
   const colon = date.getSeconds() % 2 === 0 ? ':' : ' ';
   const pad2 = (n) => String(n).padStart(2, '0');
-  const clock = `${pad2(date.getHours())}${colon}${pad2(date.getMinutes())}`;
+  const hours = state.clock24 ? date.getHours() : date.getHours() % 12 || 12;
+  const clock = `${state.clock24 ? pad2(hours) : hours}${colon}${pad2(date.getMinutes())}${state.clock24 ? '' : date.getHours() < 12 ? 'A' : 'P'}`;
   m.text(clock, PAD, y, WHITE);
 
   const page = slide && slide.pages > 1 ? `${slide.page + 1}/${slide.pages}` : '';
@@ -176,7 +178,7 @@ function drawFooter(m, state, slide) {
 
   // Weather for whichever park is on screen fills the space in between.
   const park = slide ? state.feed.parks[slide.parkIndex] : null;
-  drawWeather(m, park, PAD + textWidth(clock) + 10, pageX - 8, y, now);
+  if (state.weather) drawWeather(m, park, PAD + textWidth(clock) + 10, pageX - 8, y, now);
 }
 
 function drawBox(m, lines, y, color) {
@@ -198,10 +200,9 @@ function drawBox(m, lines, y, color) {
 const HELP = [
   ['SPACE', 'PAUSE'],
   ['LEFT RIGHT', 'PAGE'],
-  ['T', 'THEME'],
   ['UP DOWN', 'BRIGHTNESS'],
-  ['D', 'DOT DENSITY'],
-  ['C', 'CLOSED RIDES'],
+  ['T', 'THEME'],
+  ['G C D W', 'GRADIENTS CLOSED DOTS WEATHER'],
   ['1 2 0', 'ONE PARK OR ALL'],
   ['F', 'FULLSCREEN'],
 ];
@@ -225,6 +226,7 @@ function drawHelp(m, now) {
 /** Paint one frame of the board into the matrix. */
 export function drawBoard(m, state) {
   const { feed, showClosed, slideTime, dwell, now } = state;
+  flap.enabled = state.flip;
   if (state.help) return drawHelp(m, now);
 
   const size = pageSize(m);

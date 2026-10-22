@@ -1,47 +1,36 @@
-import { THEMES } from './fx.js';
+import { byKey, change, format, save } from './settings.js';
 
-const DENSITIES = [120, 160, 200, 256, 320];
-export const DEFAULTS = { theme: 'rgb', cols: 200, dwell: 8, brightness: 1, park: null };
-
-const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const mod = (n, m) => ((n % m) + m) % m;
-
-/** Read settings from the query string, falling back to defaults. */
-export function readSettings(params) {
-  const num = (key, fallback, lo, hi) => {
-    const v = parseFloat(params.get(key));
-    return Number.isFinite(v) ? clamp(v, lo, hi) : fallback;
-  };
-  const theme = params.get('theme');
-  return {
-    theme: THEMES.includes(theme) ? theme : DEFAULTS.theme,
-    cols: num('cols', DEFAULTS.cols, 64, 400),
-    dwell: num('dwell', DEFAULTS.dwell, 2, 120),
-    brightness: num('brightness', DEFAULTS.brightness, 0.1, 1),
-    showClosed: params.get('closed') === '1',
-    park: params.get('park') || DEFAULTS.park,
-  };
-}
-
-/** Keep the URL in step with the settings so a tuned board can be bookmarked. */
-function writeSettings(state, demo) {
-  const params = new URLSearchParams();
-  for (const key of ['theme', 'cols', 'dwell', 'brightness', 'park']) {
-    const v = state[key];
-    if (v === DEFAULTS[key] || v == null) continue;
-    params.set(key, typeof v === 'number' ? String(Math.round(v * 100) / 100) : v);
-  }
-  if (state.showClosed) params.set('closed', '1');
-  if (demo) params.set('demo', '1');
-  const qs = params.toString();
-  try {
-    history.replaceState(null, '', qs ? `?${qs}` : location.pathname);
-  } catch {}
-}
 
 export function setupControls({ state, matrix, demo }) {
   const toast = (text) => (state.toast = { text, until: performance.now() + 1600 });
-  const save = () => writeSettings(state, demo);
+
+  /** Step a setting, apply any side effects and tell the viewer. */
+  function nudge(key, dir = 1) {
+    const item = byKey(key);
+    const before = state[key];
+    state[key] = change(item, before, dir);
+    applied(key, before);
+    toast(`${item.label} ${format(item, state[key])}`);
+  }
+
+  function applied(key, before) {
+    if (key === 'cols') matrix.setCols(state.cols);
+    // Keep the current page and progress when the page time changes.
+    if (key === 'dwell') state.slideTime *= state.dwell / before;
+    if (key === 'park') {
+      state.slideTime = 0;
+      state.pageAge = 0;
+    }
+  }
+
+  function pickPark(i) {
+    const park = i == null ? null : state.feed.parks[i];
+    if (i != null && !park) return;
+    state.park = park ? park.id : null;
+    applied('park');
+    toast(`PARK ${park ? park.name.toUpperCase() : 'ALL'}`);
+  }
 
   const turn = (delta) => {
     const n = Math.max(1, state.slideCount);
@@ -57,33 +46,14 @@ export function setupControls({ state, matrix, demo }) {
     },
     ArrowRight: () => turn(1),
     ArrowLeft: () => turn(-1),
-    t: () => {
-      state.theme = THEMES[(THEMES.indexOf(state.theme) + 1) % THEMES.length];
-      toast(`THEME ${state.theme.toUpperCase()}`);
-    },
-    ArrowUp: () => {
-      state.brightness = clamp(Math.round((state.brightness + 0.1) * 10) / 10, 0.1, 1);
-      toast(`BRIGHTNESS ${Math.round(state.brightness * 100)}%`);
-    },
-    ArrowDown: () => {
-      state.brightness = clamp(Math.round((state.brightness - 0.1) * 10) / 10, 0.1, 1);
-      toast(`BRIGHTNESS ${Math.round(state.brightness * 100)}%`);
-    },
-    c: () => {
-      state.showClosed = !state.showClosed;
-      toast(state.showClosed ? 'CLOSED RIDES SHOWN' : 'CLOSED RIDES HIDDEN');
-    },
-    d: () => {
-      const next = DENSITIES.find((n) => n > matrix.targetCols) ?? DENSITIES[0];
-      matrix.setCols(next);
-      state.cols = next;
-      toast(`${next} DOTS WIDE`);
-    },
-    0: () => {
-      state.park = null;
-      state.slideTime = 0;
-      toast('ALL PARKS');
-    },
+    ArrowUp: () => nudge('brightness', 1),
+    ArrowDown: () => nudge('brightness', -1),
+    t: () => nudge('theme'),
+    g: () => nudge('gradients'),
+    c: () => nudge('showClosed'),
+    d: () => nudge('cols'),
+    w: () => nudge('weather'),
+    0: () => pickPark(null),
     1: () => pickPark(0),
     2: () => pickPark(1),
     f: () => {
@@ -95,22 +65,13 @@ export function setupControls({ state, matrix, demo }) {
     Escape: () => (state.help = false),
   };
 
-  function pickPark(i) {
-    const park = state.feed.parks[i];
-    if (!park) return;
-    state.park = park.id;
-    state.slideTime = 0;
-    state.pageAge = 0;
-    toast(park.name.toUpperCase());
-  }
-
   addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const act = actions[e.key.length === 1 ? e.key.toLowerCase() : e.key];
     if (!act) return;
     e.preventDefault();
     act();
-    save();
+    save(state, demo);
   });
 
   // Touch and mouse: left third goes back, anywhere else goes forward.
