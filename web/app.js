@@ -35,6 +35,7 @@ function frame(now) {
   state.pageAge += dt;
   state.now = now;
 
+  document.body.classList.toggle('flat', !state.gradients);
   matrix.clear();
   drawBoard(matrix, state);
   shade(matrix, state.theme, now, state.shine);

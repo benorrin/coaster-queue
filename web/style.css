@@ -42,7 +42,7 @@ body.idle { cursor: none; }
 #credits a:hover { color: #c3cadb; }
 body.idle #credits { color: #3a4152; }
 
-/* Slightly darkened edges, like looking at a panel through a hood. */
+/* Slightly darkened edges, like looking at a panel through a hood. Off with the gradients setting. */
 body::after {
   content: "";
   position: fixed;
@@ -50,3 +50,4 @@ body::after {
   pointer-events: none;
   background: radial-gradient(ellipse at center, transparent 62%, rgba(0, 0, 0, 0.55) 100%);
 }
+body.flat::after { display: none; }

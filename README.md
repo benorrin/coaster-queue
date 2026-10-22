@@ -46,6 +46,8 @@ browser.
 Settings are also kept in the URL, so a tuned board can be bookmarked for a wall-mounted screen, and
 URL values win over remembered ones:
 `?theme=amber&park=thorpe&dwell=6&brightness=0.8&cols=256&gradients=0&weather=0&clock24=0&closed=1`.
+Gradients cover the colour ramps on the wait bars and header rule and the darkened screen edges; off
+gives solid colours everywhere (brightness is a separate setting).
 Add `?demo` for made-up queues, handy when the parks are shut.
 
 ## Credit
