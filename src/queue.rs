@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{sync::OnceLock, time::Duration};
 
 /// A park on queue-times.com.
 #[derive(Clone)]
@@ -58,8 +58,8 @@ struct DirectoryPark {
 
 /// Every UK park queue-times knows about, sorted by name.
 pub fn fetch_parks() -> Result<Vec<Park>, String> {
-    let groups: Vec<Group> = ureq::get("https://queue-times.com/parks.json")
-        .timeout(Duration::from_secs(10))
+    let groups: Vec<Group> = agent()
+        .get("https://queue-times.com/parks.json")
         .call()
         .map_err(|e| e.to_string())?
         .into_json()
@@ -85,11 +85,22 @@ pub struct Ride {
     pub name: String,
     pub is_open: bool,
     pub wait_time: u32,
+    /// The area of the park the ride is in, when queue-times files it under one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub land: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct Land {
+    name: String,
     rides: Vec<Ride>,
+}
+
+/// One agent for every request, so connections (and their TLS sessions) are reused
+/// instead of renegotiated each poll, which matters on a small board.
+fn agent() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build())
 }
 
 #[derive(Deserialize)]
@@ -100,14 +111,20 @@ struct Response {
 
 pub fn fetch(id: u32) -> Result<Vec<Ride>, String> {
     let url = format!("https://queue-times.com/parks/{id}/queue_times.json");
-    let resp: Response = ureq::get(&url)
-        .timeout(Duration::from_secs(10))
+    let resp: Response = agent()
+        .get(&url)
         .call()
         .map_err(|e| e.to_string())?
         .into_json()
         .map_err(|e| e.to_string())?;
     let mut rides = resp.rides;
-    rides.extend(resp.lands.into_iter().flat_map(|l| l.rides));
+    for land in resp.lands {
+        let name = land.name;
+        rides.extend(land.rides.into_iter().map(|mut r| {
+            r.land = Some(name.clone());
+            r
+        }));
+    }
     rides.sort_by(|a, b| {
         b.is_open
             .cmp(&a.is_open)
@@ -146,8 +163,8 @@ pub fn fetch_weather(lat: f64, lon: f64) -> Result<Weather, String> {
          &current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation\
          &wind_speed_unit=mph&timezone=Europe%2FLondon"
     );
-    let resp: WeatherResponse = ureq::get(&url)
-        .timeout(Duration::from_secs(10))
+    let resp: WeatherResponse = agent()
+        .get(&url)
         .call()
         .map_err(|e| e.to_string())?
         .into_json()
