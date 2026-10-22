@@ -69,10 +69,6 @@ impl Groups {
         self.defs.get(id).map(|e| &e.def)
     }
 
-    pub fn contains(&self, id: &str) -> bool {
-        self.defs.contains_key(id)
-    }
-
     /// A filter that passes rides belonging to any of the named groups; no names passes everything.
     pub fn compile(&self, show: &[String]) -> Result<Filter, String> {
         if show.is_empty() {
@@ -121,10 +117,6 @@ pub struct Filter {
 impl Filter {
     pub fn all() -> Filter {
         Filter { parts: None }
-    }
-
-    pub fn is_all(&self) -> bool {
-        self.parts.is_none()
     }
 
     pub fn allows(&self, park: &str, ride: &Ride) -> bool {

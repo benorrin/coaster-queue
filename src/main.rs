@@ -1,427 +1,74 @@
+mod config;
 mod groups;
+mod led;
 mod queue;
 mod settings;
+mod store;
 mod web;
 
-use queue::{default_parks, fetch, fetch_parks, Park, Ride};
-use std::{
-    env,
-    io::{self, Write},
-    process,
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
-};
+use config::{Command, Config};
+use groups::Groups;
+use std::{env, process, thread};
 
-const RESET: &str = "\x1b[0m";
-const BOLD: &str = "\x1b[1m";
-const DIM: &str = "\x1b[2m";
-const GREEN: &str = "\x1b[32m";
-const YELLOW: &str = "\x1b[33m";
-const RED: &str = "\x1b[31m";
-const CYAN: &str = "\x1b[36m";
-
-const BAR_WIDTH: usize = 8;
-const BAR_MAX_MINS: u32 = 60;
-const WIDE_LAYOUT_MIN_COLS: usize = 90;
-
-// ---- terminal ----------------------------------------------------------
-
-struct Term {
-    orig: libc::termios,
+fn fail(message: &str) -> ! {
+    eprintln!("{message}");
+    process::exit(2);
 }
 
-impl Term {
-    fn enter() -> Term {
-        unsafe {
-            let mut t: libc::termios = std::mem::zeroed();
-            libc::tcgetattr(0, &mut t);
-            let orig = t;
-            libc::cfmakeraw(&mut t);
-            t.c_cc[libc::VMIN] = 0;
-            t.c_cc[libc::VTIME] = 1; // 100ms read timeout doubles as the tick
-            libc::tcsetattr(0, libc::TCSANOW, &t);
-            print!("\x1b[?1049h\x1b[?25l");
-            let _ = io::stdout().flush();
-            Term { orig }
+fn groups_for(cfg: &Config) -> Groups {
+    let mut groups = Groups::builtin();
+    if let Err(e) = groups.add_custom(cfg.custom_groups.clone()) {
+        fail(&e);
+    }
+    groups
+}
+
+fn run(cfg: Config) {
+    let groups = groups_for(&cfg);
+    // Fail early on a typo in `show` rather than quietly showing nothing.
+    if let Err(e) = groups.compile(&cfg.settings.show) {
+        fail(&e);
+    }
+    let shared = store::Shared::new(cfg.settings.clone(), groups);
+    store::spawn_poller(shared.clone());
+
+    let serving = cfg.run.api || cfg.run.web;
+    let listener = serving.then(|| {
+        web::bind(&cfg.server).unwrap_or_else(|e| fail(&format!("can't listen on {}:{}: {e}", cfg.server.bind, cfg.server.port)))
+    });
+    if serving {
+        let parts: Vec<&str> = [(cfg.run.api, "api"), (cfg.run.web, "web")].into_iter().filter(|(on, _)| *on).map(|(_, n)| n).collect();
+        eprintln!("coaster-queue {} on http://{}:{}", parts.join("+"), cfg.server.bind, cfg.server.port);
+    }
+
+    let (server, run_cfg) = (cfg.server, cfg.run);
+    match (listener, run_cfg.led) {
+        (Some(l), true) => {
+            let shared2 = shared.clone();
+            thread::spawn(move || web::serve(l, shared2, server, run_cfg));
+            led::run(shared);
         }
-    }
-}
-
-impl Drop for Term {
-    fn drop(&mut self) {
-        unsafe { libc::tcsetattr(0, libc::TCSANOW, &self.orig) };
-        print!("\x1b[?25h\x1b[?1049l");
-        let _ = io::stdout().flush();
-    }
-}
-
-fn term_size() -> (usize, usize) {
-    unsafe {
-        let mut ws: libc::winsize = std::mem::zeroed();
-        if libc::ioctl(1, libc::TIOCGWINSZ, &mut ws) == 0 && ws.ws_col > 0 && ws.ws_row > 0 {
-            (ws.ws_col as usize, ws.ws_row as usize)
-        } else {
-            (80, 24)
-        }
-    }
-}
-
-fn read_key() -> Option<u8> {
-    let mut b = 0u8;
-    let n = unsafe { libc::read(0, &mut b as *mut u8 as *mut libc::c_void, 1) };
-    (n == 1).then_some(b)
-}
-
-// ---- state -------------------------------------------------------------
-
-#[derive(Default)]
-struct ParkState {
-    rides: Option<Vec<Ride>>,
-    error: Option<String>,
-    fetched: Option<Instant>,
-    in_flight: bool,
-}
-
-type FetchResult = (usize, Result<Vec<Ride>, String>);
-
-fn refresh(states: &mut [ParkState], parks: &[Park], tx: &mpsc::Sender<FetchResult>) {
-    for (i, st) in states.iter_mut().enumerate() {
-        if st.in_flight {
-            continue;
-        }
-        st.in_flight = true;
-        let (tx, id) = (tx.clone(), parks[i].id);
-        thread::spawn(move || {
-            let _ = tx.send((i, fetch(id)));
-        });
-    }
-}
-
-// ---- rendering ---------------------------------------------------------
-
-fn fit(s: &str, n: usize) -> String {
-    let len = s.chars().count();
-    if len <= n {
-        format!("{s}{}", " ".repeat(n - len))
-    } else if n == 0 {
-        String::new()
-    } else {
-        let mut out: String = s.chars().take(n - 1).collect();
-        out.push('…');
-        out
-    }
-}
-
-fn wait_colour(wait: u32) -> &'static str {
-    match wait {
-        0..=20 => GREEN,
-        21..=45 => YELLOW,
-        _ => RED,
-    }
-}
-
-fn bar(wait: u32) -> String {
-    let filled = ((wait.min(BAR_MAX_MINS) as usize * BAR_WIDTH) + BAR_MAX_MINS as usize / 2)
-        / BAR_MAX_MINS as usize;
-    format!(
-        "{}{}{DIM}{}{RESET}",
-        wait_colour(wait),
-        "█".repeat(filled),
-        "░".repeat(BAR_WIDTH - filled)
-    )
-}
-
-/// Body rows for one park; every row is exactly `iw` visible columns.
-fn park_rows(st: &ParkState, iw: usize, show_closed: bool) -> Vec<String> {
-    let msg = |text: &str, style: &str| format!("{style}{}{RESET}", fit(&format!(" {text}"), iw));
-    let Some(rides) = &st.rides else {
-        return vec![match &st.error {
-            Some(e) => msg(&format!("error: {e}"), RED),
-            None => msg("loading…", DIM),
-        }];
-    };
-
-    let open: Vec<&Ride> = rides.iter().filter(|r| r.is_open).collect();
-    let closed: Vec<&Ride> = rides.iter().filter(|r| !r.is_open).collect();
-    // name column: 1 pad + name + 1 gap + bar + 1 gap + "999 min" + 1 pad
-    let nw = iw.saturating_sub(1 + 1 + BAR_WIDTH + 1 + 7 + 1).max(6);
-
-    let mut rows = Vec::new();
-    if open.is_empty() {
-        rows.push(msg("Closed — no rides operating", DIM));
-    }
-    for r in &open {
-        rows.push(format!(
-            " {} {} {}{:>3} min{RESET} ",
-            fit(&r.name, nw),
-            bar(r.wait_time),
-            wait_colour(r.wait_time),
-            r.wait_time
-        ));
-    }
-    if show_closed {
-        for r in &closed {
-            rows.push(format!(
-                "{DIM} {} {}{RESET}",
-                fit(&r.name, iw.saturating_sub(10)),
-                "closed  "
-            ));
-        }
-    } else if !closed.is_empty() {
-        rows.push(msg(&format!("{} closed · press a to list", closed.len()), DIM));
-    }
-    rows
-}
-
-fn panel(name: &str, st: &ParkState, w: usize, h: usize, show_closed: bool) -> Vec<String> {
-    let iw = w.saturating_sub(2);
-    let bh = h.saturating_sub(2);
-
-    let stats = match &st.rides {
-        Some(rides) => {
-            let waits: Vec<u32> = rides.iter().filter(|r| r.is_open).map(|r| r.wait_time).collect();
-            if waits.is_empty() {
-                "closed".to_string()
-            } else {
-                let avg = waits.iter().sum::<u32>() / waits.len() as u32;
-                format!("{} open · avg {avg}m · max {}m", waits.len(), waits.iter().max().unwrap())
-            }
-        }
-        None => String::new(),
-    };
-    let (nlen, slen) = (name.chars().count(), stats.chars().count());
-    let top = if w >= nlen + slen + 9 {
-        let fill = w - (nlen + slen + 8);
-        format!("┌─ {BOLD}{CYAN}{name}{RESET} {}{DIM} {stats}{RESET} ─┐", "─".repeat(fill))
-    } else {
-        format!("┌─ {BOLD}{CYAN}{}{RESET} ┐", fit(name, iw.saturating_sub(3)))
-    };
-
-    let mut body = park_rows(st, iw, show_closed);
-    if body.len() > bh {
-        let hidden = body.len() - bh + 1;
-        body.truncate(bh.saturating_sub(1));
-        body.push(format!("{DIM}{}{RESET}", fit(&format!(" … +{hidden} more"), iw)));
-    }
-    while body.len() < bh {
-        body.push(" ".repeat(iw));
-    }
-
-    let mut out = vec![top];
-    out.extend(body.into_iter().map(|r| format!("│{r}│")));
-    out.push(format!("└{}┘", "─".repeat(iw)));
-    out
-}
-
-fn render(
-    parks: &[Park],
-    states: &[ParkState],
-    show_closed: bool,
-    next_poll: Instant,
-) -> String {
-    let (cols, rows) = term_size();
-    let body_h = rows.saturating_sub(2);
-    let mut lines = vec![format!(
-        " {BOLD}COASTER QUEUE{RESET}{DIM}  live ride wait times{RESET}"
-    )];
-
-    let n = parks.len();
-    if n > 1 && cols >= WIDE_LAYOUT_MIN_COLS {
-        let widths: Vec<usize> = (0..n).map(|i| cols / n + usize::from(i < cols % n)).collect();
-        let panels: Vec<Vec<String>> = (0..n)
-            .map(|i| panel(&parks[i].name, &states[i], widths[i], body_h, show_closed))
-            .collect();
-        for r in 0..body_h {
-            lines.push(panels.iter().map(|p| p[r].as_str()).collect::<String>());
-        }
-    } else {
-        let each = body_h / n;
-        for i in 0..n {
-            lines.extend(panel(&parks[i].name, &states[i], cols, each, show_closed));
-        }
-    }
-
-    let now = Instant::now();
-    let age = states.iter().filter_map(|s| s.fetched).max().map(|t| now - t);
-    let mut foot = format!(
-        " q quit · r refresh · a closed rides: {} · next poll {}s · updated {}",
-        if show_closed { "shown" } else { "hidden" },
-        next_poll.saturating_duration_since(now).as_secs(),
-        age.map_or("never".into(), |a| format!("{}s ago", a.as_secs())),
-    );
-    let mut style = DIM;
-    if let Some(e) = states.iter().find_map(|s| s.error.as_ref()) {
-        foot = format!(" fetch failed ({e}) — showing last data · retrying");
-        style = RED;
-    }
-    lines.truncate(rows.saturating_sub(1));
-    while lines.len() < rows.saturating_sub(1) {
-        lines.push(String::new());
-    }
-    lines.push(format!("{style}{}{RESET}", fit(&foot, cols)));
-
-    let mut frame = String::from("\x1b[H");
-    frame.push_str(&lines.into_iter().map(|l| format!("{l}\x1b[K")).collect::<Vec<_>>().join("\r\n"));
-    frame
-}
-
-fn serve(args: impl Iterator<Item = String>) {
-    let mut cfg = web::Config {
-        bind: "127.0.0.1".into(),
-        port: 8080,
-        interval: 60,
-        web_dir: None,
-    };
-    let mut args = args;
-    while let Some(a) = args.next() {
-        let mut value = |name: &str| {
-            args.next().unwrap_or_else(|| {
-                eprintln!("{name} needs a value");
-                process::exit(2);
-            })
-        };
-        match a.as_str() {
-            "-b" | "--bind" => cfg.bind = value("--bind"),
-            "-p" | "--port" => {
-                cfg.port = value("--port").parse().unwrap_or_else(|_| {
-                    eprintln!("--port needs a number");
-                    process::exit(2);
-                })
-            }
-            "-i" | "--interval" => cfg.interval = value("--interval").parse().unwrap_or(60).max(10),
-            "--web-dir" => cfg.web_dir = Some(value("--web-dir").into()),
-            "-h" | "--help" => {
-                println!("usage: coaster-queue serve [-b|--bind ADDR] [-p|--port PORT] [-i|--interval SECS]");
-                println!("                          [--web-dir DIR]");
-                println!("serves the LED board at http://ADDR:PORT (default 127.0.0.1:8080)");
-                return;
-            }
-            other => {
-                eprintln!("unknown argument: {other}");
-                process::exit(2);
-            }
-        }
-    }
-    if let Err(e) = web::run(cfg) {
-        eprintln!("server error: {e}");
-        process::exit(1);
-    }
-}
-
-/// The parks queue-times knows in the UK, falling back to the built-in two if it can't be reached.
-fn directory() -> Vec<Park> {
-    fetch_parks().unwrap_or_else(|e| {
-        eprintln!("warning: couldn't load the park list ({e}); only Alton Towers and Thorpe Park are available");
-        default_parks()
-    })
-}
-
-/// Match a command-line name against park slugs: exactly, or as the start of exactly one.
-fn find_park(directory: &[Park], name: &str) -> Result<Park, String> {
-    let name = name.to_lowercase();
-    if let Some(p) = directory.iter().find(|p| p.slug == name) {
-        return Ok(p.clone());
-    }
-    let matches: Vec<&Park> = directory.iter().filter(|p| p.slug.starts_with(&name)).collect();
-    match matches.as_slice() {
-        [one] => Ok((*one).clone()),
-        [] => Err(format!("unknown park: {name} (see --list)")),
-        many => Err(format!(
-            "{name} matches several parks: {}",
-            many.iter().map(|p| p.slug.as_str()).collect::<Vec<_>>().join(", ")
-        )),
+        (Some(l), false) => web::serve(l, shared, server, run_cfg),
+        (None, _) => led::run(shared),
     }
 }
 
 fn main() {
-    let mut raw = env::args().skip(1).peekable();
-    if raw.peek().map(String::as_str) == Some("serve") {
-        raw.next();
-        return serve(raw);
-    }
-    let (mut names, mut interval, mut show_closed) = (Vec::new(), 30u64, false);
-    let mut args = raw;
-    while let Some(a) = args.next() {
-        match a.as_str() {
-            "-a" | "--all" => show_closed = true,
-            "-i" | "--interval" => {
-                interval = args.next().and_then(|s| s.parse().ok()).unwrap_or(30).max(10)
-            }
-            "-l" | "--list" => {
-                for p in directory() {
-                    println!("{:<32} {}", p.slug, p.name);
-                }
-                return;
-            }
-            "-h" | "--help" => {
-                println!("usage: coaster-queue [PARK...] [-a|--all] [-i|--interval SECS]");
-                println!("       coaster-queue --list");
-                println!("       coaster-queue serve --help");
-                println!("PARK is a name from --list, or the start of one (e.g. alton, chess); default: alton thorpe");
-                println!("keys:  q quit · r refresh now · a toggle closed rides");
-                return;
-            }
-            other if other.starts_with('-') => {
-                eprintln!("unknown argument: {other}");
-                process::exit(2);
-            }
-            other => names.push(other.to_string()),
-        }
-    }
-    let selected = if names.is_empty() {
-        default_parks()
-    } else {
-        let directory = directory();
-        names
-            .iter()
-            .map(|n| {
-                find_park(&directory, n).unwrap_or_else(|e| {
-                    eprintln!("{e}");
-                    process::exit(2);
-                })
-            })
-            .collect()
-    };
-
-    let mut states: Vec<ParkState> = selected.iter().map(|_| ParkState::default()).collect();
-    let (tx, rx) = mpsc::channel::<FetchResult>();
-    let every = Duration::from_secs(interval);
-    let mut next_poll = Instant::now();
-    let mut last_frame = String::new();
-
-    let _term = Term::enter();
-    loop {
-        while let Ok((i, res)) = rx.try_recv() {
-            let st = &mut states[i];
-            st.in_flight = false;
-            match res {
-                Ok(rides) => {
-                    st.rides = Some(rides);
-                    st.error = None;
-                    st.fetched = Some(Instant::now());
-                }
-                Err(e) => st.error = Some(e),
+    let command = config::load(env::args().skip(1).collect()).unwrap_or_else(|e| fail(&e));
+    match command {
+        Command::Help => print!("{}", config::HELP),
+        Command::ListParks => {
+            for p in config::directory() {
+                println!("{:<32} {}", p.slug, p.name);
             }
         }
-        if Instant::now() >= next_poll {
-            refresh(&mut states, &selected, &tx);
-            next_poll = Instant::now() + every;
+        Command::ListGroups(cfg) => {
+            let groups = groups_for(&cfg);
+            for g in groups.list() {
+                println!("{:<14} {:<20} {}", g.id, g.label, if g.builtin { "built-in" } else { "custom" });
+            }
         }
-
-        let frame = render(&selected, &states, show_closed, next_poll);
-        if frame != last_frame {
-            let mut out = io::stdout().lock();
-            let _ = out.write_all(frame.as_bytes());
-            let _ = out.flush();
-            last_frame = frame;
-        }
-
-        match read_key() {
-            Some(b'q' | b'Q' | 3 | 27) => break,
-            Some(b'r' | b'R') => next_poll = Instant::now(),
-            Some(b'a' | b'A') => show_closed = !show_closed,
-            _ => {}
-        }
+        Command::PrintConfig(cfg) => print!("{}", config::print(&cfg)),
+        Command::Run(cfg) => run(cfg),
     }
 }
