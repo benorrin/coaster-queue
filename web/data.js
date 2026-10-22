@@ -60,9 +60,12 @@ export class Feed {
    * `selected` returns the slugs of the parks to load. `demo` swaps the queue
    * API for made-up queues that drift over time.
    */
-  constructor({ demo = false, selected = () => [] } = {}) {
+  constructor({ demo = false, selected = () => [], shown = () => [] } = {}) {
     this.demo = demo;
     this.selected = selected;
+    this.shown = shown; // ride groups to restrict to; none means every ride
+    this.groups = []; // ride groups the server offers: { id, label }
+    this.onGroups = null;
     this.directory = []; // every park the server offers: { id, name }
     this.names = new Map(); // id -> display name
     this.onDirectory = null; // called once the park list arrives
@@ -71,6 +74,7 @@ export class Feed {
     this.loadedAt = 0; // ms, last successful poll
     this.error = null;
     this.loadDirectory();
+    this.loadGroups();
     this.poll();
     setInterval(() => this.poll(), POLL_MS);
   }
@@ -84,6 +88,17 @@ export class Feed {
       this.onDirectory?.(this.directory);
     } catch {
       setTimeout(() => this.loadDirectory(), 3000);
+    }
+  }
+
+  async loadGroups() {
+    try {
+      const res = await fetch('/api/groups', { cache: 'no-store' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      this.groups = await res.json();
+      this.onGroups?.(this.groups);
+    } catch {
+      setTimeout(() => this.loadGroups(), 3000);
     }
   }
 
@@ -116,7 +131,7 @@ export class Feed {
   async poll() {
     if (this.demo) return this.pollDemo();
     try {
-      const res = await fetch(`/api/queues?parks=${this.selected().join(',')}`, { cache: 'no-store' });
+      const res = await fetch(`/api/queues?parks=${this.selected().join(',')}&show=${this.shown().join(',')}`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const parks = await res.json();
       this.markTrends(parks);

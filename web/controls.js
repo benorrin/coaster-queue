@@ -19,12 +19,12 @@ export function setupControls({ state, matrix, demo }) {
     if (key === 'cols') matrix.setCols(state.cols);
     // Keep the current page and progress when the page time changes.
     if (key === 'dwell') state.slideTime *= state.dwell / before;
-    if (key === 'park' || key === 'parks') {
+    if (key === 'park' || key === 'parks' || key === 'show') {
       if (state.park && !state.parks.includes(state.park)) state.park = null;
       state.slideTime = 0;
       state.pageAge = 0;
     }
-    if (key === 'parks') state.feed.poll();
+    if (key === 'parks' || key === 'show') state.feed.poll();
   }
 
   function pickPark(i) {
@@ -48,37 +48,41 @@ export function setupControls({ state, matrix, demo }) {
     if (open) state.help = false;
   };
   const picker = state.picker;
-  const openPicker = (open = !picker.open) => {
+  // The picker edits either the chosen parks or the chosen ride groups.
+  const pickerItems = () => (picker.key === 'show' ? state.feed.groups : state.feed.directory);
+  const openPicker = (open = !picker.open, key = picker.key) => {
     picker.open = open;
     if (open) {
+      picker.key = key;
       state.help = false;
-      const first = state.feed.directory.findIndex((p) => state.parks.includes(p.id));
-      picker.index = Math.max(0, first);
+      picker.index = Math.max(0, pickerItems().findIndex((p) => state[key].includes(p.id)));
     }
   };
-  // Tick or untick the park under the cursor; at least one park always stays chosen.
-  const togglePark = () => {
-    const park = state.feed.directory[picker.index];
-    if (!park) return;
-    const on = state.parks.includes(park.id);
-    if (on && state.parks.length === 1) return;
-    const chosen = new Set(state.parks);
-    on ? chosen.delete(park.id) : chosen.add(park.id);
-    state.parks = state.feed.directory.map((p) => p.id).filter((id) => chosen.has(id));
-    applied('parks');
+  // Tick or untick the entry under the cursor; at least one park always stays chosen.
+  const toggleItem = () => {
+    const item = pickerItems()[picker.index];
+    if (!item) return;
+    const key = picker.key;
+    const on = state[key].includes(item.id);
+    if (key === 'parks' && on && state.parks.length === 1) return;
+    const chosen = new Set(state[key]);
+    on ? chosen.delete(item.id) : chosen.add(item.id);
+    state[key] = pickerItems().map((p) => p.id).filter((id) => chosen.has(id));
+    applied(key);
   };
   const pickerActions = {
-    ArrowUp: () => (picker.index = mod(picker.index - 1, Math.max(1, state.feed.directory.length))),
-    ArrowDown: () => (picker.index = mod(picker.index + 1, Math.max(1, state.feed.directory.length))),
-    ' ': togglePark,
-    Enter: togglePark,
+    ArrowUp: () => (picker.index = mod(picker.index - 1, Math.max(1, pickerItems().length))),
+    ArrowDown: () => (picker.index = mod(picker.index + 1, Math.max(1, pickerItems().length))),
+    ' ': toggleItem,
+    Enter: toggleItem,
     p: () => openPicker(false),
+    r: () => openPicker(false),
     Escape: () => openPicker(false),
   };
 
   const step = (dir) => {
     const item = SCHEMA[menu.index];
-    if (item.kind === 'list') openPicker(true);
+    if (item.kind === 'list') openPicker(true, item.key);
     else nudge(item.key, dir, true);
   };
 
@@ -96,7 +100,8 @@ export function setupControls({ state, matrix, demo }) {
 
   const actions = {
     s: () => openMenu(),
-    p: () => openPicker(),
+    p: () => openPicker(!picker.open, 'parks'),
+    r: () => openPicker(!picker.open, 'show'),
     ' ': () => {
       state.paused = !state.paused;
       toast(state.paused ? 'PAUSED' : 'RESUMED');
@@ -147,7 +152,7 @@ export function setupControls({ state, matrix, demo }) {
       const row = Math.floor((dot.y - ROWS_Y) / ROW_PITCH);
       if (row < 0 || row >= picker.visible) return openPicker(false);
       picker.index = picker.offset + row;
-      togglePark();
+      toggleItem();
       return save(state, demo);
     }
     if (!menu.open) return turn(e.clientX < board.clientWidth / 3 ? -1 : 1);

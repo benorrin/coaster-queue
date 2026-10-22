@@ -1,8 +1,8 @@
 import { THEMES } from './fx.js';
 
 const STORAGE_KEY = 'coaster-queue';
-const DEFAULT_PARKS = ['alton-towers', 'thorpe-park'];
-const SLUG = /^[a-z0-9-]+$/;
+const DEFAULT_PARKS = ['alton-towers', 'thorpe-park']; // fallback if the server can't be asked
+const SLUG = /^[a-z0-9_-]+$/;
 const ON_OFF = (v) => (v ? 'ON' : 'OFF');
 
 /**
@@ -20,6 +20,7 @@ export const SCHEMA = [
   { key: 'gradients', label: 'GRADIENTS', kind: 'bool', def: true, fmt: ON_OFF },
   { key: 'showClosed', param: 'closed', label: 'CLOSED RIDES', kind: 'bool', def: false, fmt: ON_OFF },
   { key: 'parks', label: 'CHOOSE PARKS', kind: 'list', def: DEFAULT_PARKS, fmt: (v) => `${v.length} SELECTED` },
+  { key: 'show', label: 'RIDE GROUPS', kind: 'list', def: [], fmt: (v) => (v.length ? `${v.length} CHOSEN` : 'ALL RIDES') },
   { key: 'park', label: 'SHOW PARK', kind: 'enum', options: (s) => [null, ...s.parks], def: null, fmt: (v, s) => (v ? s.feed.nameOf(v).toUpperCase() : 'ALL SELECTED') },
   { key: 'weather', label: 'WEATHER', kind: 'bool', def: true, fmt: ON_OFF },
   { key: 'clock24', label: 'CLOCK', kind: 'bool', def: true, fmt: (v) => (v ? '24 HOUR' : '12 HOUR') },
@@ -53,7 +54,9 @@ function parse(item, raw) {
   }
   if (item.kind === 'list') {
     const ids = (Array.isArray(raw) ? raw : String(raw).split(',')).filter((id) => SLUG.test(id));
-    return ids.length ? [...new Set(ids)] : undefined;
+    // Only the groups list may be empty (meaning every ride); "all" in a URL spells that.
+    if (!ids.length) return item.key === 'show' ? [] : undefined;
+    return [...new Set(ids)];
   }
   if (item.key === 'park') {
     const v = String(raw).toLowerCase();
@@ -70,29 +73,45 @@ function stored() {
   }
 }
 
-/** Settings from defaults, then saved preferences, then the query string. */
-export function load(params) {
+/** The server's settings, under the names used here. */
+const fromServer = (server) => ({ ...server, showClosed: server?.show_closed });
+
+// What each setting is when the viewer hasn't changed it: the server's value, else the built-in default.
+let baseline = {};
+
+/**
+ * Settings from the built-in defaults, then the server's settings, then this
+ * browser's saved changes, then the query string.
+ */
+export function load(params, server = {}) {
   const saved = stored();
+  const fromHost = fromServer(server);
   const out = {};
+  baseline = {};
   for (const item of SCHEMA) {
-    out[item.key] = parse(item, params.get(param(item))) ?? parse(item, saved[item.key]) ?? item.def;
+    baseline[item.key] = parse(item, fromHost[item.key]) ?? item.def;
+    out[item.key] = parse(item, params.get(param(item))) ?? parse(item, saved[item.key]) ?? baseline[item.key];
   }
   return out;
 }
 
-/** Remember the settings, and mirror the non-default ones into the URL for bookmarking. */
+/**
+ * Remember what this viewer has changed from the baseline, and mirror those
+ * changes into the URL for bookmarking. Untouched settings keep following the server.
+ */
 export function save(state, demo) {
   const params = new URLSearchParams();
-  const all = {};
+  const changed = {};
   for (const item of SCHEMA) {
     const v = state[item.key];
-    all[item.key] = v;
-    if (same(v, item.def)) continue;
-    params.set(param(item), item.kind === 'bool' ? (v ? '1' : '0') : v === null ? 'all' : String(v));
+    if (same(v, baseline[item.key])) continue;
+    changed[item.key] = v;
+    const text = item.kind === 'bool' ? (v ? '1' : '0') : v === null || (Array.isArray(v) && !v.length) ? 'all' : String(v);
+    params.set(param(item), text);
   }
   if (demo) params.set('demo', '1');
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(changed));
   } catch {}
   const qs = params.toString();
   try {
@@ -109,6 +128,12 @@ export function change(item, value, dir, state) {
   const i = options.findIndex((o) => o === value);
   const n = options.length;
   return options[i < 0 ? (dir > 0 ? 0 : n - 1) : (i + dir + n) % n];
+}
+
+/** Drop chosen ride groups the server doesn't know about. */
+export function sanitiseGroups(state, groups) {
+  const known = new Set(groups.map((g) => g.id));
+  state.show = state.show.filter((id) => known.has(id));
 }
 
 /** Drop chosen parks the server doesn't know about; never leave the selection empty. */
