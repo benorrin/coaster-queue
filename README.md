@@ -163,3 +163,7 @@ When a bug is fixed, add a test for it to whichever of these is closest, with a 
 
 Wait times are provided by [Queue-Times.com](https://queue-times.com/) and weather by
 [Open-Meteo.com](https://open-meteo.com/) (CC BY 4.0); keep both links on the web display.
+
+## License
+
+GNU General Public License v3.0 or later; see [LICENSE](LICENSE).
