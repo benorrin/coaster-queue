@@ -24,10 +24,13 @@ const MAX_WAIT = 60;
 const WHITE = [235, 240, 255];
 const DIM = [90, 98, 120];
 const RED = [255, 40, 40];
-const ACCENTS = [
-  [255, 170, 30],
-  [40, 200, 255],
-];
+
+/** Each park gets its own stable colour, picked from a hash of its slug. */
+export function accentFor(id) {
+  let h = 2166136261;
+  for (const c of id) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return hsv((h >>> 0) % 360, 0.85, 1);
+}
 
 /** Green at no wait, through yellow, to red at an hour or more. */
 export function waitColor(mins) {
@@ -113,7 +116,7 @@ function drawHeader(m, park, accent, x0, w, progress, gradient) {
   // Double-height title only when it leaves room for the stats block beside it.
   const statsW = 7 * ADVANCE;
   const big = textWidth(name, 2) + statsW + 3 * PAD <= w;
-  m.text(name, x0 + PAD, big ? HEADER_Y : HEADER_Y + 3, accent, { scale: big ? 2 : 1 });
+  m.text(name, x0 + PAD, big ? HEADER_Y : HEADER_Y + 3, accent, { scale: big ? 2 : 1, clip: [x0 + PAD, x0 + w - PAD] });
 
   if (open.length && big) {
     const avg = Math.round(open.reduce((s, r) => s + r.wait_time, 0) / open.length);
@@ -217,19 +220,63 @@ function drawMenu(m, state) {
     const y = ROWS_Y + row * ROW_PITCH;
     const selected = i === menu.index;
     const v = state[item.key];
-    const text = format(item, v);
+    const text = format(item, v, state);
     // Grey for off rather than red: red nearly vanishes in the monochrome themes.
     const colour = item.kind === 'bool' && !v ? [150, 155, 170] : item.kind === 'bool' ? GREEN : CYAN;
 
     if (selected) m.text('>', PAD, y, [255, 170, 30]);
     m.text(item.label, PAD + 6, y, selected ? WHITE : [150, 160, 185]);
     if (selected) m.text('<', valueX - 7, y, DIM);
-    m.text(text, valueX, y, selected ? colour : scale(colour, 0.7));
-    if (selected) m.text('>', valueX + textWidth(text) + 1, y, DIM);
+    m.text(text, valueX, y, selected ? colour : scale(colour, 0.7), { clip: [0, m.cols - PAD - 8] });
+    if (selected && valueX + textWidth(text) + 7 < m.cols) m.text('>', valueX + textWidth(text) + 1, y, DIM);
   }
   if (menu.offset > 0) m.text('▲', m.cols - PAD - 5, ROWS_Y, DIM);
   if (menu.offset + visible < SCHEMA.length) m.text('▼', m.cols - PAD - 5, ROWS_Y + (visible - 1) * ROW_PITCH, DIM);
-  m.text('ARROWS ADJUST - S CLOSES', PAD, m.rows - 8, DIM, { clip: [0, m.cols - PAD] });
+  m.text(m.cols < 160 ? 'TAP TO CHANGE' : 'ARROWS ADJUST - S CLOSES', PAD, m.rows - 8, DIM, { clip: [0, m.cols - PAD] });
+}
+
+function drawCheck(m, x, y, on, colour) {
+  for (let i = 0; i < 5; i++) {
+    m.px(x + i, y, colour);
+    m.px(x + i, y + 4, colour);
+    m.px(x, y + i, colour);
+    m.px(x + 4, y + i, colour);
+  }
+  if (on) m.rect(x + 1, y + 1, 3, 3, colour);
+}
+
+/** Park chooser: a checklist of every park the server offers. */
+function drawPicker(m, state) {
+  const { picker, now, feed } = state;
+  m.text('PARKS', PAD, HEADER_Y, (i) => hsv(now / 12 + i * 20, 0.8, 1), { scale: 2 });
+  const directory = feed.directory;
+  if (!directory.length) return void m.text('LOADING PARK LIST', PAD, ROWS_Y + 2, DIM);
+
+  const visible = Math.max(1, Math.floor((m.rows - FOOTER_H - ROWS_Y + 2) / ROW_PITCH));
+  picker.visible = visible;
+  picker.offset = Math.max(0, Math.min(directory.length - visible, picker.index - Math.floor(visible / 2)));
+
+  for (let row = 0; row < Math.min(visible, directory.length); row++) {
+    const i = picker.offset + row;
+    const park = directory[i];
+    const y = ROWS_Y + row * ROW_PITCH;
+    const on = state.parks.includes(park.id);
+    const selected = i === picker.index;
+    const accent = accentFor(park.id);
+    if (selected) m.text('>', PAD, y, [255, 170, 30]);
+    drawCheck(m, PAD + 8, y + 1, on, on ? accent : [150, 155, 170]);
+    const colour = on ? accent : selected ? WHITE : [130, 138, 160];
+    // A name too long for the row is cut off, except under the cursor where it scrolls.
+    const name = normalise(park.name);
+    const x = PAD + 18;
+    const room = m.cols - PAD - 8 - x;
+    const offset = selected ? scrollOffset(textWidth(name) - room, now / 1000) : 0;
+    m.text(name, x + offset, y, colour, { clip: [x, x + room] });
+  }
+  if (picker.offset > 0) m.text('▲', m.cols - PAD - 5, ROWS_Y, DIM);
+  if (picker.offset + visible < directory.length) m.text('▼', m.cols - PAD - 5, ROWS_Y + (visible - 1) * ROW_PITCH, DIM);
+  const hint = m.cols < 160 ? 'TAP TO TICK' : 'SPACE TICKS - P DONE';
+  m.text(`${state.parks.length} CHOSEN - ${hint}`, PAD, m.rows - 8, DIM, { clip: [0, m.cols - PAD] });
 }
 
 const HELP = [
@@ -237,9 +284,9 @@ const HELP = [
   ['LEFT RIGHT', 'PAGE'],
   ['UP DOWN', 'BRIGHTNESS'],
   ['T', 'THEME'],
-  ['S', 'SETTINGS MENU'],
+  ['S P', 'SETTINGS AND PARK PICKER'],
   ['G C D W', 'GRADIENTS CLOSED DOTS WEATHER'],
-  ['1 2 0', 'ONE PARK OR ALL'],
+  ['1-9 0', 'SHOW ONE PARK OR ALL'],
   ['F', 'FULLSCREEN'],
 ];
 
@@ -263,6 +310,7 @@ function drawHelp(m, now) {
 export function drawBoard(m, state) {
   const { feed, showClosed, slideTime, dwell, now } = state;
   flap.enabled = state.flip;
+  if (state.picker.open) return drawPicker(m, state);
   if (state.menu.open) return drawMenu(m, state);
   if (state.help) return drawHelp(m, now);
 
@@ -279,7 +327,7 @@ export function drawBoard(m, state) {
 
   if (slide) {
     const park = feed.parks[slide.parkIndex];
-    drawPanel(m, park, slide, ACCENTS[slide.parkIndex % ACCENTS.length], 0, m.cols, progress, state);
+    drawPanel(m, park, slide, accentFor(park.id), 0, m.cols, progress, state);
   } else {
     m.text(feed.error ? 'NO SIGNAL' : 'LOADING', PAD, ROWS_Y + 2, feed.error ? RED : DIM);
   }

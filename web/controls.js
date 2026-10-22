@@ -10,19 +10,21 @@ export function setupControls({ state, matrix, demo }) {
   function nudge(key, dir = 1, quiet = false) {
     const item = byKey(key);
     const before = state[key];
-    state[key] = change(item, before, dir);
+    state[key] = change(item, before, dir, state);
     applied(key, before);
-    if (!quiet) toast(`${item.label} ${format(item, state[key])}`);
+    if (!quiet) toast(`${item.label} ${format(item, state[key], state)}`);
   }
 
   function applied(key, before) {
     if (key === 'cols') matrix.setCols(state.cols);
     // Keep the current page and progress when the page time changes.
     if (key === 'dwell') state.slideTime *= state.dwell / before;
-    if (key === 'park') {
+    if (key === 'park' || key === 'parks') {
+      if (state.park && !state.parks.includes(state.park)) state.park = null;
       state.slideTime = 0;
       state.pageAge = 0;
     }
+    if (key === 'parks') state.feed.poll();
   }
 
   function pickPark(i) {
@@ -30,7 +32,7 @@ export function setupControls({ state, matrix, demo }) {
     if (i != null && !park) return;
     state.park = park ? park.id : null;
     applied('park');
-    toast(`PARK ${park ? park.name.toUpperCase() : 'ALL'}`);
+    toast(park ? park.name.toUpperCase() : 'ALL SELECTED PARKS');
   }
 
   const turn = (delta) => {
@@ -45,7 +47,40 @@ export function setupControls({ state, matrix, demo }) {
     menu.open = open;
     if (open) state.help = false;
   };
-  const step = (dir) => nudge(SCHEMA[menu.index].key, dir, true);
+  const picker = state.picker;
+  const openPicker = (open = !picker.open) => {
+    picker.open = open;
+    if (open) {
+      state.help = false;
+      const first = state.feed.directory.findIndex((p) => state.parks.includes(p.id));
+      picker.index = Math.max(0, first);
+    }
+  };
+  // Tick or untick the park under the cursor; at least one park always stays chosen.
+  const togglePark = () => {
+    const park = state.feed.directory[picker.index];
+    if (!park) return;
+    const on = state.parks.includes(park.id);
+    if (on && state.parks.length === 1) return;
+    const chosen = new Set(state.parks);
+    on ? chosen.delete(park.id) : chosen.add(park.id);
+    state.parks = state.feed.directory.map((p) => p.id).filter((id) => chosen.has(id));
+    applied('parks');
+  };
+  const pickerActions = {
+    ArrowUp: () => (picker.index = mod(picker.index - 1, Math.max(1, state.feed.directory.length))),
+    ArrowDown: () => (picker.index = mod(picker.index + 1, Math.max(1, state.feed.directory.length))),
+    ' ': togglePark,
+    Enter: togglePark,
+    p: () => openPicker(false),
+    Escape: () => openPicker(false),
+  };
+
+  const step = (dir) => {
+    const item = SCHEMA[menu.index];
+    if (item.kind === 'list') openPicker(true);
+    else nudge(item.key, dir, true);
+  };
 
   // While the menu is open, arrows move and change values instead of paging.
   const menuActions = {
@@ -61,6 +96,7 @@ export function setupControls({ state, matrix, demo }) {
 
   const actions = {
     s: () => openMenu(),
+    p: () => openPicker(),
     ' ': () => {
       state.paused = !state.paused;
       toast(state.paused ? 'PAUSED' : 'RESUMED');
@@ -75,8 +111,7 @@ export function setupControls({ state, matrix, demo }) {
     d: () => nudge('cols'),
     w: () => nudge('weather'),
     0: () => pickPark(null),
-    1: () => pickPark(0),
-    2: () => pickPark(1),
+    ...Object.fromEntries([...Array(9)].map((_, i) => [i + 1, () => pickPark(i)])),
     f: () => {
       if (document.fullscreenElement) document.exitFullscreen();
       else document.documentElement.requestFullscreen?.().catch(() => {});
@@ -95,7 +130,8 @@ export function setupControls({ state, matrix, demo }) {
   addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-    const act = (menu.open && menuActions[key]) || actions[key];
+    const act =
+      (picker.open && pickerActions[key]) || (!picker.open && menu.open && menuActions[key]) || (!picker.open && actions[key]);
     if (!act) return;
     e.preventDefault();
     act();
@@ -105,6 +141,15 @@ export function setupControls({ state, matrix, demo }) {
   // Touch and mouse: left third goes back, anywhere else goes forward.
   const board = matrix.canvas;
   board.addEventListener('click', (e) => {
+    if (picker.open) {
+      // Tap a park to tick it, or tap above the list to close.
+      const dot = matrix.dotAt(e.clientX, e.clientY);
+      const row = Math.floor((dot.y - ROWS_Y) / ROW_PITCH);
+      if (row < 0 || row >= picker.visible) return openPicker(false);
+      picker.index = picker.offset + row;
+      togglePark();
+      return save(state, demo);
+    }
     if (!menu.open) return turn(e.clientX < board.clientWidth / 3 ? -1 : 1);
     // In the menu: tap above the list to close, or tap a row's left/right half to step it.
     const dot = matrix.dotAt(e.clientX, e.clientY);
