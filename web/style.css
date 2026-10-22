@@ -13,17 +13,32 @@ html, body {
 }
 
 body {
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
   font: 12px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
 #board {
-  width: 100vw;
-  height: 100vh;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
   display: block;
   background: #040508;
 }
+
+body.idle { cursor: none; }
+
+#credit {
+  flex: none;
+  padding: 3px 0 4px;
+  text-align: center;
+  color: #6f7890;
+  font-size: 10px;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+#credit:hover { color: #c3cadb; }
+body.idle #credit { color: #3a4152; }
 
 /* Slightly darkened edges, like looking at a panel through a hood. */
 body::after {

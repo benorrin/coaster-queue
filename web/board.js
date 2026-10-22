@@ -43,9 +43,10 @@ export function visibleRides(park, showClosed) {
 }
 
 /** One slide per page of rides, for every park in turn. */
-export function buildSlides(parks, size, showClosed) {
+export function buildSlides(parks, size, showClosed, only = null) {
   const slides = [];
   parks.forEach((park, parkIndex) => {
+    if (only && park.id !== only) return;
     const rides = visibleRides(park, showClosed);
     const pages = Math.max(1, Math.ceil(rides.length / size));
     for (let page = 0; page < pages; page++) {
@@ -73,16 +74,17 @@ function drawBar(m, key, x, y, w, mins, now) {
 }
 
 function drawRide(m, ride, key, x0, w, y, state) {
-  const { now, slideTime } = state;
+  const { now, pageAge } = state;
   const right = x0 + w - PAD;
-  const barW = Math.max(10, Math.min(28, Math.round(w * 0.14)));
+  // Narrow screens drop the bar so the name keeps a useful width.
+  const barW = w < 150 ? 0 : Math.max(10, Math.min(28, Math.round(w * 0.14)));
   const textX = right - WAIT_TEXT_W;
   const arrowX = textX - ARROW_W - 2;
-  const barX = arrowX - 4 - barW;
+  const barX = arrowX - (barW ? 4 + barW : 1);
   const nameX = x0 + PAD;
   const nameW = barX - nameX - 3;
   const name = normalise(ride.name);
-  const offset = scrollOffset(textWidth(name) - nameW, slideTime);
+  const offset = scrollOffset(textWidth(name) - nameW, pageAge);
   const nameOpts = { clip: [nameX, nameX + nameW] };
 
   if (!ride.is_open) {
@@ -96,7 +98,7 @@ function drawRide(m, ride, key, x0, w, y, state) {
   const pulse = ride.wait_time >= 50 ? 0.75 + 0.25 * Math.sin(now / 170) : 1;
   const c = scale(waitColor(ride.wait_time), pulse);
   flap.draw(m, `${key}.n`, name, nameX + offset, y, WHITE, now, nameOpts);
-  drawBar(m, `${key}.b`, barX, y + 2, barW, ride.wait_time, now);
+  if (barW) drawBar(m, `${key}.b`, barX, y + 2, barW, ride.wait_time, now);
   if (ride.trend) m.text(ride.trend > 0 ? '▲' : '▼', arrowX, y, ride.trend > 0 ? RED : [40, 255, 90]);
   const label = ride.wait_time === 0 ? 'WALK' : `${ride.wait_time}M`;
   flap.draw(m, `${key}.w`, label, right - textWidth(label), y, c, now);
@@ -186,12 +188,63 @@ function drawFooter(m, state, slide) {
   }
 }
 
+function drawBox(m, lines, y, color) {
+  const w = Math.max(...lines.map((l) => textWidth(l))) + 10;
+  const h = lines.length * ROW_PITCH + 3;
+  const x = Math.floor((m.cols - w) / 2);
+  m.rect(x, y, w, h, [0, 0, 0]);
+  for (let i = 0; i < w; i++) {
+    m.px(x + i, y, color);
+    m.px(x + i, y + h - 1, color);
+  }
+  for (let j = 0; j < h; j++) {
+    m.px(x, y + j, color);
+    m.px(x + w - 1, y + j, color);
+  }
+  lines.forEach((l, i) => m.text(l, x + 5, y + 3 + i * ROW_PITCH, WHITE));
+}
+
+const HELP = [
+  ['SPACE', 'PAUSE'],
+  ['LEFT RIGHT', 'PAGE'],
+  ['T', 'THEME'],
+  ['UP DOWN', 'BRIGHTNESS'],
+  ['G D', 'GLOW AND DOT DENSITY'],
+  ['C', 'CLOSED RIDES'],
+  ['1 2 0', 'ONE PARK OR ALL'],
+  ['F', 'FULLSCREEN'],
+];
+
+function drawHelp(m, now) {
+  m.text('CONTROLS', PAD, HEADER_Y, (i) => hsv(now / 12 + i * 20, 0.8, 1), { scale: 2 });
+  const keyW = 11 * ADVANCE;
+  const perCol = Math.max(1, Math.floor((m.rows - FOOTER_H - ROWS_Y) / ROW_PITCH));
+  const colW = keyW + 22 * ADVANCE;
+  HELP.forEach(([key, what], i) => {
+    const col = Math.floor(i / perCol);
+    if (PAD + col * colW + keyW + textWidth(what) > m.cols) return;
+    const x = PAD + col * colW;
+    const y = ROWS_Y + (i % perCol) * ROW_PITCH;
+    m.text(key, x, y, [40, 200, 255]);
+    m.text(what, x + keyW, y, WHITE);
+  });
+  m.text('H CLOSES - TAP TO PAGE', PAD, m.rows - 8, DIM);
+}
+
 /** Paint one frame of the board into the matrix. */
 export function drawBoard(m, state) {
-  const { feed, showClosed, slideTime, dwell } = state;
+  const { feed, showClosed, slideTime, dwell, now } = state;
+  if (state.help) return drawHelp(m, now);
+
   const size = pageSize(m);
-  const slides = buildSlides(feed.parks, size, showClosed);
-  const slide = slides.length ? slides[Math.floor(slideTime / dwell) % slides.length] : null;
+  const slides = buildSlides(feed.parks, size, showClosed, state.park);
+  state.slideCount = slides.length;
+  const index = slides.length ? Math.floor(slideTime / dwell) % slides.length : -1;
+  if (index !== state.slideIndex) {
+    state.slideIndex = index;
+    state.pageAge = 0;
+  }
+  const slide = slides[index] ?? null;
   const progress = (slideTime % dwell) / dwell;
 
   if (slide) {
@@ -201,4 +254,8 @@ export function drawBoard(m, state) {
     m.text(feed.error ? 'NO SIGNAL' : 'LOADING', PAD, ROWS_Y + 2, feed.error ? RED : DIM);
   }
   drawFooter(m, state, slide);
+
+  if (state.toast && now < state.toast.until) {
+    drawBox(m, [normalise(state.toast.text)], Math.floor(m.rows / 2) - 6, [40, 200, 255]);
+  }
 }

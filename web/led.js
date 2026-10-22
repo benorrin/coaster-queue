@@ -56,8 +56,8 @@ export class Matrix {
     this.canvas.width = Math.round(cssW * dpr);
     this.canvas.height = Math.round(cssH * dpr);
 
-    // Never let dots get smaller than ~4 css px; narrow screens just get fewer columns.
-    this.cols = Math.max(48, Math.min(this.targetCols, Math.floor(cssW / 4)));
+    // Never let dots get smaller than ~3 css px; narrow screens just get fewer columns.
+    this.cols = Math.max(48, Math.min(this.targetCols, Math.floor(cssW / 3)));
     this.pitch = this.canvas.width / this.cols;
     this.rows = Math.max(16, Math.floor(this.canvas.height / this.pitch));
     this.offY = (this.canvas.height - this.rows * this.pitch) / 2;
