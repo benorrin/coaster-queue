@@ -1,74 +1,48 @@
+// The departure board: pages of rides for each park, a header, and a footer with the
+// clock, weather and page counter.
+
+import { AMBER, DIM, GREEN, GREY, RED, WHITE, accentFor, hsv, mix, scale } from './color.js';
 import { ADVANCE, normalise, textWidth } from './font.js';
-import { hsv, mix, scale } from './led.js';
-import { Flap, Ease } from './fx.js';
-import { SCHEMA, format } from './settings.js';
-import { ICON_W, drawIcon, summarise, tempColor } from './weather.js';
+import { ease, flap } from './fx.js';
+import { HEADER_Y, PAD, ROWS_Y, ROW_PITCH, RULE_Y, footerY, scrollOffset, visibleRows } from './layout.js';
+import { drawOverlay, drawToast } from './overlays.js';
+import { drawWeather } from './weather.js';
 
-export const flap = new Flap();
-export const ease = new Ease();
-
-// Vertical layout, in dots.
-const HEADER_Y = 2;
-const RULE_Y = 17;
-export const ROWS_Y = 20;
-export const ROW_PITCH = 9;
-const FOOTER_H = 11;
-const PAD = 3;
-
+const MAX_WAIT = 60; // minutes at which the bar is full and the colour is red
+const LONG_QUEUE = 50; // minutes at which a wait starts to pulse
 const WAIT_TEXT_W = 4 * ADVANCE - 1; // fits "WALK"
 const ARROW_W = 5;
-const SCROLL_SPEED = 30; // dots per second for names that don't fit
-const SCROLL_HOLD = 1.4; // seconds parked at each end
-const MAX_WAIT = 60;
-
-const WHITE = [235, 240, 255];
-const DIM = [90, 98, 120];
-const RED = [255, 40, 40];
-
-/** Each park gets its own stable colour, picked from a hash of its slug. */
-export function accentFor(id) {
-  let h = 2166136261;
-  for (const c of id) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
-  return hsv((h >>> 0) % 360, 0.85, 1);
-}
+const BIG_TEXT_COLS = 160; // header text is double size at least this wide
+const NO_BAR_COLS = 150; // narrower than this the wait bar is dropped to leave room for names
 
 /** Green at no wait, through yellow, to red at an hour or more. */
-export function waitColor(mins) {
+function waitColor(mins) {
   return hsv(130 * (1 - Math.min(mins, MAX_WAIT) / MAX_WAIT), 1, 1);
 }
 
-export function pageSize(matrix) {
-  return Math.max(1, Math.floor((matrix.rows - FOOTER_H - ROWS_Y + 2) / ROW_PITCH));
-}
+// ---- pages ------------------------------------------------------------------
 
-/** Rides worth showing for a park: open ones, longest queue first, then (optionally) closed. */
-export function visibleRides(park, showClosed) {
-  const open = park.rides.filter((r) => r.is_open);
-  return showClosed ? [...open, ...park.rides.filter((r) => !r.is_open)] : open;
-}
-
-/** One slide per page of rides, for every park in turn. */
-export function buildSlides(parks, size, showClosed, only = null) {
+/**
+ * One slide per page of rides, for every park in turn (or just the park `only`).
+ * Open rides come first, longest wait first, then closed ones if they're wanted.
+ */
+function buildSlides(parks, pageSize, showClosed, only) {
   const slides = [];
   parks.forEach((park, parkIndex) => {
     if (only && park.id !== only) return;
-    const rides = visibleRides(park, showClosed);
-    const pages = Math.max(1, Math.ceil(rides.length / size));
+    const open = park.rides.filter((r) => r.is_open);
+    const rides = showClosed ? [...open, ...park.rides.filter((r) => !r.is_open)] : open;
+    const pages = Math.max(1, Math.ceil(rides.length / pageSize));
     for (let page = 0; page < pages; page++) {
-      slides.push({ parkIndex, page, pages, rides: rides.slice(page * size, (page + 1) * size) });
+      slides.push({ parkIndex, rides: rides.slice(page * pageSize, (page + 1) * pageSize) });
     }
   });
   return slides;
 }
 
-/** Horizontal offset for a name wider than its column: park, scroll, park. */
-function scrollOffset(overflow, t) {
-  if (overflow <= 0) return 0;
-  const run = overflow / SCROLL_SPEED;
-  const u = t % (run + 2 * SCROLL_HOLD);
-  return -Math.min(overflow, Math.max(0, (u - SCROLL_HOLD) * SCROLL_SPEED));
-}
+// ---- rides ------------------------------------------------------------------
 
+/** A bar of dots that fills (smoothly) in proportion to the wait. */
 function drawBar(m, key, x, y, w, mins, now, gradient) {
   const fill = ease.get(key, (Math.min(mins, MAX_WAIT) / MAX_WAIT) * w, now);
   for (let i = 0; i < w; i++) {
@@ -79,288 +53,145 @@ function drawBar(m, key, x, y, w, mins, now, gradient) {
   }
 }
 
-function drawRide(m, ride, key, x0, w, y, state) {
-  const { now, pageAge } = state;
+/** Where each part of a ride row goes, for a panel `w` dots wide starting at `x0`. */
+function rideColumns(x0, w) {
   const right = x0 + w - PAD;
-  // Narrow screens drop the bar so the name keeps a useful width.
-  const barW = w < 150 ? 0 : Math.max(10, Math.min(28, Math.round(w * 0.14)));
-  const textX = right - WAIT_TEXT_W;
-  const arrowX = textX - ARROW_W - 2;
+  const barW = w < NO_BAR_COLS ? 0 : Math.max(10, Math.min(28, Math.round(w * 0.14)));
+  const arrowX = right - WAIT_TEXT_W - ARROW_W - 2;
   const barX = arrowX - (barW ? 4 + barW : 1);
   const nameX = x0 + PAD;
-  const nameW = barX - nameX - 3;
+  return { right, barW, arrowX, barX, nameX, nameW: barX - nameX - 3 };
+}
+
+function drawRide(m, ride, key, x0, w, y, state) {
+  const { now, pageAge } = state;
+  const col = rideColumns(x0, w);
   const name = normalise(ride.name);
-  const offset = scrollOffset(textWidth(name) - nameW, pageAge);
-  const nameOpts = { clip: [nameX, nameX + nameW] };
+  const nameX = col.nameX + scrollOffset(textWidth(name) - col.nameW, pageAge);
+  const nameOpts = { clip: [col.nameX, col.nameX + col.nameW] };
 
   if (!ride.is_open) {
-    flap.draw(m, `${key}.n`, name, nameX + offset, y, DIM, now, nameOpts);
-    const label = 'CLOSED';
-    m.text(label, right - textWidth(label), y, scale(RED, 0.55));
+    flap.draw(m, `${key}.n`, name, nameX, y, DIM, now, nameOpts);
+    m.text('CLOSED', col.right - textWidth('CLOSED'), y, scale(RED, 0.55));
     return;
   }
 
   // Long queues breathe so they catch the eye from across the concourse.
-  const pulse = ride.wait_time >= 50 ? 0.85 + 0.15 * Math.sin(now / 170) : 1;
-  const c = scale(waitColor(ride.wait_time), pulse);
-  flap.draw(m, `${key}.n`, name, nameX + offset, y, WHITE, now, nameOpts);
-  if (barW) drawBar(m, `${key}.b`, barX, y + 2, barW, ride.wait_time, now, state.gradients);
-  if (ride.trend) m.text(ride.trend > 0 ? '▲' : '▼', arrowX, y, ride.trend > 0 ? RED : [40, 255, 90]);
-  const label = ride.wait_time === 0 ? 'WALK' : `${ride.wait_time}M`;
-  flap.draw(m, `${key}.w`, label, right - textWidth(label), y, c, now);
+  const pulse = ride.wait_time >= LONG_QUEUE ? 0.85 + 0.15 * Math.sin(now / 170) : 1;
+  const waitLabel = ride.wait_time === 0 ? 'WALK' : `${ride.wait_time}M`;
+  flap.draw(m, `${key}.n`, name, nameX, y, WHITE, now, nameOpts);
+  if (col.barW) drawBar(m, `${key}.b`, col.barX, y + 2, col.barW, ride.wait_time, now, state.gradients);
+  if (ride.trend) m.text(ride.trend > 0 ? '▲' : '▼', col.arrowX, y, ride.trend > 0 ? RED : GREEN);
+  flap.draw(m, `${key}.w`, waitLabel, col.right - textWidth(waitLabel), y, scale(waitColor(ride.wait_time), pulse), now);
 }
 
-function drawHeader(m, park, accent, x0, w, progress, gradient, pageAge) {
-  const name = normalise(park.name);
+// ---- header -----------------------------------------------------------------
+
+/** The right-hand block: open count and average wait, or "CLOSED". Empty on narrow screens. */
+function headerStats(park, big) {
   const open = park.rides.filter((r) => r.is_open);
+  if (big && open.length) {
+    const avg = Math.round(open.reduce((sum, r) => sum + r.wait_time, 0) / open.length);
+    return { lines: [`${open.length} OPEN`, `AVG ${avg}M`] };
+  }
+  if (!open.length && park.fetched_at) return { lines: ['CLOSED'], closed: true };
+  return { lines: [] };
+}
+
+function drawHeader(m, park, accent, x0, w, progress, state) {
+  const name = normalise(park.name);
   // Every park gets the same type size (set by the screen width, not the name); a name
   // too long for its space scrolls instead of shrinking.
-  const big = w >= 160;
-  const sizeScale = big ? 2 : 1;
-  const stats = big && open.length ? [`${open.length} OPEN`, `AVG ${Math.round(open.reduce((s, r) => s + r.wait_time, 0) / open.length)}M`] : [];
-  const closed = !open.length && park.fetched_at ? 'CLOSED' : '';
-  const rightW = stats.length ? textWidth(stats[0]) + PAD : closed ? textWidth(closed) + PAD : 0;
-  const room = w - 2 * PAD - rightW - (rightW ? PAD : 0);
+  const big = w >= BIG_TEXT_COLS;
+  const textScale = big ? 2 : 1;
+  const stats = headerStats(park, big);
+  const statsW = stats.lines.length ? textWidth(stats.lines[0]) + PAD : 0;
+  const room = w - 2 * PAD - statsW - (statsW ? PAD : 0);
   const left = x0 + PAD;
-  const offset = scrollOffset(textWidth(name, sizeScale) - room, pageAge);
-  m.text(name, left + offset, big ? HEADER_Y : HEADER_Y + 3, accent, { scale: sizeScale, clip: [left, left + room] });
+  const offset = scrollOffset(textWidth(name, textScale) - room, state.pageAge);
+  m.text(name, left + offset, big ? HEADER_Y : HEADER_Y + 3, accent, { scale: textScale, clip: [left, left + room] });
 
-  stats.forEach((s, i) => m.text(s, x0 + w - PAD - textWidth(s), HEADER_Y + i * 8, i ? DIM : WHITE));
-  if (closed) m.text(closed, x0 + w - PAD - textWidth(closed), HEADER_Y + 3, scale(RED, 0.8));
+  stats.lines.forEach((line, i) => {
+    const colour = stats.closed ? scale(RED, 0.8) : i ? DIM : WHITE;
+    m.text(line, x0 + w - PAD - textWidth(line), HEADER_Y + (stats.closed ? 3 : i * 8), colour);
+  });
 
-  // Rule under the header doubles as the page-dwell progress bar.
-  const lit = Math.round((w - 2 * PAD) * progress);
-  for (let i = 0; i < w - 2 * PAD; i++) {
-    const c = gradient ? mix(accent, hsv(210, 0.5, 1), i / (w - 2 * PAD)) : accent;
-    m.px(x0 + PAD + i, RULE_Y, i < lit ? c : scale(c, 0.15));
+  // The rule under the header doubles as the page-dwell progress bar.
+  const ruleW = w - 2 * PAD;
+  const lit = Math.round(ruleW * progress);
+  for (let i = 0; i < ruleW; i++) {
+    const c = state.gradients ? mix(accent, hsv(210, 0.5, 1), i / ruleW) : accent;
+    m.px(left + i, RULE_Y, i < lit ? c : scale(c, 0.15));
   }
 }
 
 function drawPanel(m, park, slide, accent, x0, w, progress, state) {
-  drawHeader(m, park, accent, x0, w, progress, state.gradients, state.pageAge);
+  drawHeader(m, park, accent, x0, w, progress, state);
   if (!park.fetched_at) {
     m.text(park.error ? 'NO DATA' : 'LOADING', x0 + PAD, ROWS_Y + 2, park.error ? RED : DIM);
-    return;
-  }
-  if (!slide.rides.length) {
+  } else if (!slide.rides.length) {
     m.text('NO RIDES OPERATING', x0 + PAD, ROWS_Y + 2, DIM);
-    return;
+  } else {
+    slide.rides.forEach((ride, i) => drawRide(m, ride, `${park.id}.${i}`, x0, w, ROWS_Y + i * ROW_PITCH, state));
   }
-  slide.rides.forEach((ride, i) => drawRide(m, ride, `${park.id}.${i}`, x0, w, ROWS_Y + i * ROW_PITCH, state));
 }
 
-const WEATHER_SPEED = 24; // dots per second when the weather is too long to fit
-const WEATHER_GAP = '      ';
+// ---- footer -----------------------------------------------------------------
 
-/** Weather for a park; fits as a static line, otherwise scrolls round in the space it has. */
-function drawWeather(m, park, x0, x1, y, state) {
-  const { now } = state;
-  const wx = summarise(park?.weather, { feelsLike: state.feelsLike });
-  if (!wx) return;
-  drawIcon(m, wx.icon, x0, y, now);
-  const x = x0 + ICON_W + 4;
-
-  const parts = [
-    [wx.text, WHITE],
-    [wx.temp, tempColor(wx.tempC)],
-    ...wx.extras.map((e) => [e, DIM]),
-  ];
-  let text = parts.map(([t]) => t).join('  ');
-  const colours = [];
-  parts.forEach(([t, c], i) => {
-    for (const _ of t) colours.push(c);
-    if (i < parts.length - 1) colours.push(DIM, DIM);
-  });
-  const colourAt = (i) => colours[i] ?? DIM;
-  const opts = { clip: [x, x1] };
-
-  if (textWidth(text) <= x1 - x) return void flap.draw(m, 'wx', text, x, y, colourAt, now, opts);
-
-  // Too long: loop it, with a gap before it comes round again.
-  text += WEATHER_GAP;
-  const loop = textWidth(text) + 1;
-  const shift = Math.floor(((now / 1000) * WEATHER_SPEED) % loop);
-  flap.draw(m, 'wx', text, x - shift, y, colourAt, now, opts);
-  m.text(text, x - shift + loop, y, colourAt, opts);
+/** "23:07" (colon blinking), or "11:07P" on a 12-hour clock. */
+function formatClock(date, clock24) {
+  const h = date.getHours();
+  const colon = date.getSeconds() % 2 === 0 ? ':' : ' ';
+  const mins = String(date.getMinutes()).padStart(2, '0');
+  return clock24 ? `${String(h).padStart(2, '0')}${colon}${mins}` : `${h % 12 || 12}${colon}${mins}${h < 12 ? 'A' : 'P'}`;
 }
 
 function drawFooter(m, state, slide) {
-  const { now } = state;
-  const y = m.rows - 8;
-  const date = new Date();
-  const colon = date.getSeconds() % 2 === 0 ? ':' : ' ';
-  const pad2 = (n) => String(n).padStart(2, '0');
-  const hours = state.clock24 ? date.getHours() : date.getHours() % 12 || 12;
-  const clock = `${state.clock24 ? pad2(hours) : hours}${colon}${pad2(date.getMinutes())}${state.clock24 ? '' : date.getHours() < 12 ? 'A' : 'P'}`;
+  const y = footerY(m);
+  const clock = formatClock(new Date(), state.clock24);
   m.text(clock, PAD, y, WHITE);
 
   // Position among all the pages being cycled through. Always shown, so the weather
   // gets whatever space is left rather than the other way round.
   const page = slide ? `${state.slideIndex + 1}/${state.slideCount}` : '';
   const pageX = m.cols - PAD - 6 - textWidth(page);
-  m.text(page, pageX, y, [150, 160, 185]);
+  m.text(page, pageX, y, GREY);
 
   // Status LED: green = live, amber = last poll failed, red = nothing loaded yet.
-  const status = !state.feed.parks.length ? RED : state.feed.error ? [255, 170, 30] : [40, 255, 90];
+  const status = !state.feed.parks.length ? RED : state.feed.error ? AMBER : GREEN;
   m.rect(m.cols - PAD - 3, y + 2, 3, 3, status);
 
   // Weather for whichever park is on screen fills the space in between.
-  const park = slide ? state.feed.parks[slide.parkIndex] : null;
-  if (state.weather) drawWeather(m, park, PAD + textWidth(clock) + 10, pageX - 8, y, state);
-}
-
-function drawBox(m, lines, y, color) {
-  const w = Math.max(...lines.map((l) => textWidth(l))) + 10;
-  const h = lines.length * ROW_PITCH + 3;
-  const x = Math.floor((m.cols - w) / 2);
-  m.rect(x, y, w, h, [0, 0, 0]);
-  for (let i = 0; i < w; i++) {
-    m.px(x + i, y, color);
-    m.px(x + i, y + h - 1, color);
+  if (state.weather) {
+    const park = slide ? state.feed.parks[slide.parkIndex] : null;
+    drawWeather(m, park, PAD + textWidth(clock) + 10, pageX - 8, y, state);
   }
-  for (let j = 0; j < h; j++) {
-    m.px(x, y + j, color);
-    m.px(x + w - 1, y + j, color);
-  }
-  lines.forEach((l, i) => m.text(l, x + 5, y + 3 + i * ROW_PITCH, WHITE));
 }
 
-const GREEN = [40, 255, 90];
-const CYAN = [40, 200, 255];
+// ---- the frame --------------------------------------------------------------
 
-/** Settings list; scrolls to keep the selected row visible. */
-function drawMenu(m, state) {
-  const { menu, now } = state;
-  m.text('SETTINGS', PAD, HEADER_Y, (i) => hsv(now / 12 + i * 20, 0.8, 1), { scale: 2 });
-
-  const visible = Math.max(1, Math.floor((m.rows - FOOTER_H - ROWS_Y + 2) / ROW_PITCH));
-  menu.visible = visible;
-  menu.offset = Math.max(0, Math.min(SCHEMA.length - visible, menu.index - Math.floor(visible / 2)));
-
-  const valueX = PAD + 6 + 14 * ADVANCE;
-  for (let row = 0; row < Math.min(visible, SCHEMA.length); row++) {
-    const i = menu.offset + row;
-    const item = SCHEMA[i];
-    const y = ROWS_Y + row * ROW_PITCH;
-    const selected = i === menu.index;
-    const v = state[item.key];
-    const text = format(item, v, state);
-    // Grey for off rather than red: red nearly vanishes in the monochrome themes.
-    const colour = item.kind === 'bool' && !v ? [150, 155, 170] : item.kind === 'bool' ? GREEN : CYAN;
-
-    if (selected) m.text('>', PAD, y, [255, 170, 30]);
-    m.text(item.label, PAD + 6, y, selected ? WHITE : [150, 160, 185]);
-    if (selected) m.text('<', valueX - 7, y, DIM);
-    m.text(text, valueX, y, selected ? colour : scale(colour, 0.7), { clip: [0, m.cols - PAD - 8] });
-    if (selected && valueX + textWidth(text) + 7 < m.cols) m.text('>', valueX + textWidth(text) + 1, y, DIM);
-  }
-  if (menu.offset > 0) m.text('▲', m.cols - PAD - 5, ROWS_Y, DIM);
-  if (menu.offset + visible < SCHEMA.length) m.text('▼', m.cols - PAD - 5, ROWS_Y + (visible - 1) * ROW_PITCH, DIM);
-  m.text(m.cols < 160 ? 'TAP TO CHANGE' : 'ARROWS ADJUST - S CLOSES', PAD, m.rows - 8, DIM, { clip: [0, m.cols - PAD] });
-}
-
-function drawCheck(m, x, y, on, colour) {
-  for (let i = 0; i < 5; i++) {
-    m.px(x + i, y, colour);
-    m.px(x + i, y + 4, colour);
-    m.px(x, y + i, colour);
-    m.px(x + 4, y + i, colour);
-  }
-  if (on) m.rect(x + 1, y + 1, 3, 3, colour);
-}
-
-/** Checklist for choosing parks or ride groups, whichever the picker is set to. */
-function drawPicker(m, state) {
-  const { picker, now, feed } = state;
-  const groups = picker.key === 'show';
-  m.text(groups ? 'GROUPS' : 'PARKS', PAD, HEADER_Y, (i) => hsv(now / 12 + i * 20, 0.8, 1), { scale: 2 });
-  const items = groups ? feed.groups : feed.directory;
-  if (!items.length) return void m.text('LOADING', PAD, ROWS_Y + 2, DIM);
-  const chosen = state[picker.key];
-
-  const visible = Math.max(1, Math.floor((m.rows - FOOTER_H - ROWS_Y + 2) / ROW_PITCH));
-  picker.visible = visible;
-  picker.offset = Math.max(0, Math.min(items.length - visible, picker.index - Math.floor(visible / 2)));
-
-  for (let row = 0; row < Math.min(visible, items.length); row++) {
-    const i = picker.offset + row;
-    const item = items[i];
-    const y = ROWS_Y + row * ROW_PITCH;
-    const on = chosen.includes(item.id);
-    const selected = i === picker.index;
-    const accent = accentFor(item.id);
-    if (selected) m.text('>', PAD, y, [255, 170, 30]);
-    drawCheck(m, PAD + 8, y + 1, on, on ? accent : [150, 155, 170]);
-    const colour = on ? accent : selected ? WHITE : [130, 138, 160];
-    // A name too long for the row is cut off, except under the cursor where it scrolls.
-    const name = normalise(item.label ?? item.name);
-    const x = PAD + 18;
-    const room = m.cols - PAD - 8 - x;
-    const offset = selected ? scrollOffset(textWidth(name) - room, now / 1000) : 0;
-    m.text(name, x + offset, y, colour, { clip: [x, x + room] });
-  }
-  if (picker.offset > 0) m.text('▲', m.cols - PAD - 5, ROWS_Y, DIM);
-  if (picker.offset + visible < items.length) m.text('▼', m.cols - PAD - 5, ROWS_Y + (visible - 1) * ROW_PITCH, DIM);
-  const count = groups && !chosen.length ? 'ALL RIDES' : `${chosen.length} CHOSEN`;
-  const hint = m.cols < 160 ? 'TAP TO TICK' : groups ? 'NONE SHOWS ALL' : 'SPACE TICKS - P DONE';
-  m.text(`${count} - ${hint}`, PAD, m.rows - 8, DIM, { clip: [0, m.cols - PAD] });
-}
-
-const HELP = [
-  ['SPACE', 'PAUSE'],
-  ['LEFT RIGHT', 'PAGE'],
-  ['UP DOWN', 'BRIGHTNESS'],
-  ['T', 'THEME'],
-  ['S P R', 'SETTINGS PARKS GROUPS'],
-  ['G C D W', 'GRADIENTS CLOSED DOTS WEATHER'],
-  ['1-9 0', 'SHOW ONE PARK OR ALL'],
-  ['F', 'FULLSCREEN'],
-];
-
-function drawHelp(m, now) {
-  m.text('CONTROLS', PAD, HEADER_Y, (i) => hsv(now / 12 + i * 20, 0.8, 1), { scale: 2 });
-  const keyW = 11 * ADVANCE;
-  const perCol = Math.max(1, Math.floor((m.rows - FOOTER_H - ROWS_Y) / ROW_PITCH));
-  const colW = keyW + 22 * ADVANCE;
-  HELP.forEach(([key, what], i) => {
-    const col = Math.floor(i / perCol);
-    if (PAD + col * colW + keyW + textWidth(what) > m.cols) return;
-    const x = PAD + col * colW;
-    const y = ROWS_Y + (i % perCol) * ROW_PITCH;
-    m.text(key, x, y, [40, 200, 255]);
-    m.text(what, x + keyW, y, WHITE);
-  });
-  m.text('H CLOSES - TAP TO PAGE', PAD, m.rows - 8, DIM);
-}
-
-/** Paint one frame of the board into the matrix. */
+/** Paint one frame of the board (or whichever overlay is open) into the matrix. */
 export function drawBoard(m, state) {
-  const { feed, showClosed, slideTime, dwell, now } = state;
+  const { feed, slideTime, dwell, now } = state;
   flap.enabled = state.flip;
-  if (state.picker.open) return drawPicker(m, state);
-  if (state.menu.open) return drawMenu(m, state);
-  if (state.help) return drawHelp(m, now);
+  if (drawOverlay(m, state)) return;
 
-  const size = pageSize(m);
-  const slides = buildSlides(feed.parks, size, showClosed, state.park);
+  const slides = buildSlides(feed.parks, visibleRows(m), state.showClosed, state.park);
   state.slideCount = slides.length;
   const index = slides.length ? Math.floor(slideTime / dwell) % slides.length : -1;
   if (index !== state.slideIndex) {
     state.slideIndex = index;
-    state.pageAge = 0;
+    state.pageAge = 0; // restart the name scrolling on each new page
   }
   const slide = slides[index] ?? null;
-  const progress = (slideTime % dwell) / dwell;
 
   if (slide) {
     const park = feed.parks[slide.parkIndex];
-    drawPanel(m, park, slide, accentFor(park.id), 0, m.cols, progress, state);
+    drawPanel(m, park, slide, accentFor(park.id), 0, m.cols, (slideTime % dwell) / dwell, state);
   } else {
     m.text(feed.error ? 'NO SIGNAL' : 'LOADING', PAD, ROWS_Y + 2, feed.error ? RED : DIM);
   }
   drawFooter(m, state, slide);
 
-  if (state.toast && now < state.toast.until) {
-    drawBox(m, [normalise(state.toast.text)], Math.floor(m.rows / 2) - 6, [40, 200, 255]);
-  }
+  if (state.toast && now < state.toast.until) drawToast(m, state.toast.text);
 }

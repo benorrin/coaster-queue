@@ -2,9 +2,9 @@
 //! config file, then command-line flags (and then the API, while running).
 
 use crate::groups::GroupDef;
-use crate::queue::{self, Park};
+use crate::queue;
 use crate::settings::{Patch, Settings};
-use serde::Deserialize;
+use serde::{de::DeserializeOwned, Deserialize};
 use std::{collections::BTreeMap, env, fs, path::PathBuf};
 
 pub const HELP: &str = "\
@@ -42,7 +42,8 @@ other:
 led keys: q quit - r refresh now - a show/hide closed rides
 ";
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// Which parts of the program to run.
+#[derive(Clone, Copy)]
 pub struct Run {
     pub led: bool,
     pub api: bool,
@@ -50,6 +51,7 @@ pub struct Run {
 }
 
 impl Run {
+    /// Parse a component list such as `led,api`; `web` implies `api`.
     fn parse(list: &[String]) -> Result<Run, String> {
         let mut run = Run { led: false, api: false, web: false };
         for part in list {
@@ -61,16 +63,15 @@ impl Run {
                 other => return Err(format!("unknown component {other:?} (use led, api, web or all)")),
             }
         }
-        if run.web {
-            run.api = true; // the web display reads from the api
-        }
-        if !(run.led || run.api || run.web) {
+        run.api |= run.web; // the web display reads from the api
+        if !(run.led || run.api) {
             return Err("nothing to run".into());
         }
         Ok(run)
     }
 
-    pub fn names(&self) -> Vec<&'static str> {
+    /// The enabled components' names, for display.
+    pub fn names(self) -> Vec<&'static str> {
         [(self.led, "led"), (self.api, "api"), (self.web, "web")]
             .into_iter()
             .filter(|(on, _)| *on)
@@ -79,13 +80,22 @@ impl Run {
     }
 }
 
-#[derive(Clone, Debug)]
+/// How the HTTP server (api and web) listens.
+#[derive(Clone)]
 pub struct Server {
     pub bind: String,
     pub port: u16,
+    /// Serve the web display from here instead of the copy built into the binary.
     pub web_dir: Option<PathBuf>,
+    /// If set, changing settings through the API needs this as a bearer token.
     pub api_token: Option<String>,
     pub max_connections: usize,
+}
+
+impl Default for Server {
+    fn default() -> Server {
+        Server { bind: "127.0.0.1".into(), port: 8080, web_dir: None, api_token: None, max_connections: 32 }
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -99,23 +109,49 @@ struct ServerPatch {
 }
 
 impl ServerPatch {
+    /// Overwrite whichever server options this patch sets.
     fn apply(self, s: &mut Server) {
-        s.bind = self.bind.unwrap_or(std::mem::take(&mut s.bind));
-        s.port = self.port.unwrap_or(s.port);
-        s.web_dir = self.web_dir.or(s.web_dir.take());
-        s.api_token = self.api_token.or(s.api_token.take());
-        s.max_connections = self.max_connections.unwrap_or(s.max_connections);
+        if let Some(v) = self.bind {
+            s.bind = v;
+        }
+        if let Some(v) = self.port {
+            s.port = v;
+        }
+        if self.web_dir.is_some() {
+            s.web_dir = self.web_dir;
+        }
+        if self.api_token.is_some() {
+            s.api_token = self.api_token;
+        }
+        if let Some(v) = self.max_connections {
+            s.max_connections = v;
+        }
     }
 }
 
+/// Everything the program is configured with once the file and flags are read.
 pub struct Config {
     pub run: Run,
     pub server: Server,
     pub settings: Settings,
     pub custom_groups: BTreeMap<String, GroupDef>,
+    /// The config file that was used, if any.
     pub path: Option<PathBuf>,
 }
 
+impl Default for Config {
+    fn default() -> Config {
+        Config {
+            run: Run { led: true, api: false, web: false },
+            server: Server::default(),
+            settings: Settings::default(),
+            custom_groups: BTreeMap::new(),
+            path: None,
+        }
+    }
+}
+
+/// What the command line asked for.
 pub enum Command {
     Run(Config),
     ListParks,
@@ -124,6 +160,7 @@ pub enum Command {
     Help,
 }
 
+/// The command line, parsed but not yet combined with the config file.
 struct Args {
     run: Option<Vec<String>>,
     config: Option<PathBuf>,
@@ -154,11 +191,14 @@ fn parse_args(raw: Vec<String>) -> Result<Args, String> {
         let mut value = |flag: &str| it.next().ok_or_else(|| format!("{flag} needs a value"));
         match arg.as_str() {
             "serve" if first => a.run = Some(vec!["api".into(), "web".into()]),
-            "-r" | "--run" => a.run = Some(value("--run")?.split(',').map(|s| s.trim().to_string()).collect()),
+            "-r" | "--run" => {
+                a.run = Some(value("--run")?.split(',').map(|s| s.trim().to_string()).collect())
+            }
             "-c" | "--config" => a.config = Some(value("--config")?.into()),
             "-s" | "--set" => {
                 let kv = value("--set")?;
-                let (k, v) = kv.split_once('=').ok_or_else(|| format!("--set needs KEY=VALUE, not {kv:?}"))?;
+                let (k, v) =
+                    kv.split_once('=').ok_or_else(|| format!("--set needs KEY=VALUE, not {kv:?}"))?;
                 a.sets.push((k.trim().to_string(), v.to_string()));
             }
             "-S" | "--show" => a.sets.push(("show".into(), value("--show")?)),
@@ -166,7 +206,8 @@ fn parse_args(raw: Vec<String>) -> Result<Args, String> {
             "-i" | "--interval" => a.sets.push(("interval".into(), value("--interval")?)),
             "-b" | "--bind" => a.server.bind = Some(value("--bind")?),
             "-p" | "--port" => {
-                a.server.port = Some(value("--port")?.parse().map_err(|_| "--port needs a number".to_string())?)
+                a.server.port =
+                    Some(value("--port")?.parse().map_err(|_| "--port needs a number".to_string())?)
             }
             "--web-dir" => a.server.web_dir = Some(value("--web-dir")?.into()),
             "--api-token" => a.server.api_token = Some(value("--api-token")?),
@@ -182,6 +223,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, String> {
     Ok(a)
 }
 
+/// Where to look for a config file when none is given, most specific first.
 fn config_candidates() -> Vec<PathBuf> {
     let mut paths = vec![PathBuf::from("coaster-queue.toml")];
     if let Some(dir) = env::var_os("XDG_CONFIG_HOME") {
@@ -193,49 +235,37 @@ fn config_candidates() -> Vec<PathBuf> {
     paths
 }
 
+/// Decode a TOML value, naming the section in any error.
+fn section<T: DeserializeOwned>(value: toml::Value, name: &str) -> Result<T, String> {
+    value.try_into().map_err(|e: toml::de::Error| format!("{name}: {e}"))
+}
+
 /// Apply the contents of a config file to `cfg`. Unknown keys are errors, so typos are caught.
 fn apply_file(cfg: &mut Config, text: &str, run: &mut Option<Vec<String>>) -> Result<(), String> {
     let mut table: toml::Table = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
     if let Some(v) = table.remove("run") {
-        *run = Some(v.try_into().map_err(|e: toml::de::Error| format!("run: {e}"))?);
+        *run = Some(section(v, "run")?);
     }
     if let Some(v) = table.remove("server") {
-        let patch: ServerPatch = v.try_into().map_err(|e: toml::de::Error| format!("[server]: {e}"))?;
-        patch.apply(&mut cfg.server);
+        section::<ServerPatch>(v, "[server]")?.apply(&mut cfg.server);
     }
     if let Some(v) = table.remove("groups") {
-        cfg.custom_groups = v.try_into().map_err(|e: toml::de::Error| format!("[groups]: {e}"))?;
+        cfg.custom_groups = section(v, "[groups]")?;
     }
-    let patch: Patch = toml::Value::Table(table).try_into().map_err(|e: toml::de::Error| e.to_string())?;
+    // Whatever is left must be settings.
+    let patch: Patch = section(toml::Value::Table(table), "settings")?;
     cfg.settings.apply(patch)
 }
 
-/// Resolve a name given on the command line against park slugs: exactly, or as the
-/// start of exactly one.
-pub fn find_park(directory: &[Park], name: &str) -> Result<Park, String> {
-    let name = name.to_lowercase();
-    if let Some(p) = directory.iter().find(|p| p.slug == name) {
-        return Ok(p.clone());
-    }
-    let matches: Vec<&Park> = directory.iter().filter(|p| p.slug.starts_with(&name)).collect();
-    match matches.as_slice() {
-        [one] => Ok((*one).clone()),
-        [] => Err(format!("unknown park: {name} (see --list-parks)")),
-        many => Err(format!(
-            "{name} matches several parks: {}",
-            many.iter().map(|p| p.slug.as_str()).collect::<Vec<_>>().join(", ")
-        )),
-    }
+/// Read and apply the config file at `path`.
+fn load_file(cfg: &mut Config, path: PathBuf, run: &mut Option<Vec<String>>) -> Result<(), String> {
+    let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    apply_file(cfg, &text, run).map_err(|e| format!("{}: {e}", path.display()))?;
+    cfg.path = Some(path);
+    Ok(())
 }
 
-/// The UK parks queue-times knows, falling back to the built-in two if it can't be reached.
-pub fn directory() -> Vec<Park> {
-    queue::fetch_parks().unwrap_or_else(|e| {
-        eprintln!("warning: couldn't load the park list ({e}); only Alton Towers and Thorpe Park are available");
-        queue::default_parks()
-    })
-}
-
+/// Turn the command line into a `Command`, layering defaults, the config file and the flags.
 pub fn load(raw: Vec<String>) -> Result<Command, String> {
     let args = parse_args(raw)?;
     if args.help {
@@ -245,46 +275,29 @@ pub fn load(raw: Vec<String>) -> Result<Command, String> {
         return Ok(Command::ListParks);
     }
 
-    let mut cfg = Config {
-        run: Run { led: true, api: false, web: false },
-        server: Server { bind: "127.0.0.1".into(), port: 8080, web_dir: None, api_token: None, max_connections: 32 },
-        settings: Settings::default(),
-        custom_groups: BTreeMap::new(),
-        path: None,
-    };
-
+    let mut cfg = Config::default();
     let mut run = None;
-    match &args.config {
-        Some(path) => {
-            let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-            apply_file(&mut cfg, &text, &mut run).map_err(|e| format!("{}: {e}", path.display()))?;
-            cfg.path = Some(path.clone());
-        }
+    match args.config {
+        Some(path) => load_file(&mut cfg, path, &mut run)?,
         None => {
-            for path in config_candidates() {
-                if let Ok(text) = fs::read_to_string(&path) {
-                    apply_file(&mut cfg, &text, &mut run).map_err(|e| format!("{}: {e}", path.display()))?;
-                    cfg.path = Some(path);
-                    break;
-                }
+            if let Some(path) = config_candidates().into_iter().find(|p| p.exists()) {
+                load_file(&mut cfg, path, &mut run)?;
             }
         }
     }
 
     // Command-line flags win over the file.
-    if let Some(r) = args.run {
-        run = Some(r);
-    }
-    if let Some(r) = run {
-        cfg.run = Run::parse(&r)?;
+    run = args.run.or(run);
+    if let Some(list) = run {
+        cfg.run = Run::parse(&list)?;
     }
     args.server.apply(&mut cfg.server);
     cfg.settings.apply(Patch::from_pairs(&args.sets)?)?;
     if !args.names.is_empty() {
-        let directory = directory();
-        let parks: Result<Vec<String>, String> =
-            args.names.iter().map(|n| find_park(&directory, n).map(|p| p.slug)).collect();
-        cfg.settings.apply(Patch { parks: Some(parks?), ..Patch::default() })?;
+        let directory = queue::directory_or_default();
+        let slugs = args.names.iter().map(|n| queue::find_park(&directory, n).map(|p| p.slug));
+        let parks = slugs.collect::<Result<Vec<_>, _>>()?;
+        cfg.settings.apply(Patch { parks: Some(parks), ..Patch::default() })?;
     }
 
     Ok(if args.list_groups {
@@ -307,11 +320,17 @@ pub fn print(cfg: &Config) -> String {
     out.push_str(&format!("run = [{}]\n", run.join(", ")));
     out.push_str(&toml::to_string(&cfg.settings).unwrap_or_default());
     out.push_str("\n[server]\n");
-    out.push_str(&format!("bind = {:?}\nport = {}\nmax_connections = {}\n", cfg.server.bind, cfg.server.port, cfg.server.max_connections));
+    out.push_str(&format!(
+        "bind = {:?}\nport = {}\nmax_connections = {}\n",
+        cfg.server.bind, cfg.server.port, cfg.server.max_connections
+    ));
     if let Some(d) = &cfg.server.web_dir {
         out.push_str(&format!("web_dir = {:?}\n", d.display().to_string()));
     }
-    out.push_str(&format!("api_token = {}\n", if cfg.server.api_token.is_some() { "\"(set)\"" } else { "\"\"  # none: API changes are open" }));
+    out.push_str(&format!(
+        "api_token = {}\n",
+        if cfg.server.api_token.is_some() { "\"(set)\"" } else { "\"\"  # none: API changes are open" }
+    ));
     out
 }
 
@@ -333,13 +352,7 @@ mod tests {
 
     #[test]
     fn file_then_flags() {
-        let mut cfg = Config {
-            run: Run { led: true, api: false, web: false },
-            server: Server { bind: "127.0.0.1".into(), port: 8080, web_dir: None, api_token: None, max_connections: 32 },
-            settings: Settings::default(),
-            custom_groups: BTreeMap::new(),
-            path: None,
-        };
+        let mut cfg = Config::default();
         let mut run = None;
         apply_file(
             &mut cfg,

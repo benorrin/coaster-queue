@@ -1,29 +1,5 @@
 import { ADVANCE, glyph, textWidth } from './font.js';
 
-// ---- colour helpers: colours are [r, g, b] with channels 0-255 -----------
-
-export function hsv(h, s = 1, v = 1) {
-  h = ((h % 360) + 360) % 360;
-  const c = v * s;
-  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-  const m = v - c;
-  const [r, g, b] =
-    h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
-  return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
-}
-
-export function mix(a, b, t) {
-  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-}
-
-export function scale(c, k) {
-  return [c[0] * k, c[1] * k, c[2] * k];
-}
-
-export function luma([r, g, b]) {
-  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
-}
-
 // ---- the matrix ----------------------------------------------------------
 
 const VERT = `
@@ -165,6 +141,18 @@ export class Matrix {
 
   rect(x, y, w, h, c, a = 1) {
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) this.px(x + i, y + j, c, a);
+  }
+
+  /** A one-dot border around the w by h area at (x, y). */
+  outline(x, y, w, h, c) {
+    for (let i = 0; i < w; i++) {
+      this.px(x + i, y, c);
+      this.px(x + i, y + h - 1, c);
+    }
+    for (let j = 1; j < h - 1; j++) {
+      this.px(x, y + j, c);
+      this.px(x + w - 1, y + j, c);
+    }
   }
 
   /**

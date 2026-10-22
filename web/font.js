@@ -66,11 +66,10 @@ const GLYPHS = {
   '▲': ['.....', '..#..', '..#..', '.###.', '.###.', '#####', '.....'],
   '▼': ['.....', '#####', '.###.', '.###.', '..#..', '..#..', '.....'],
   '■': ['.....', '.###.', '.###.', '.###.', '.###.', '.###.', '.....'],
-  '?_': ['#####', '#...#', '#...#', '#...#', '#...#', '#...#', '#####'],
 };
 
-export const GLYPH_W = 5;
-export const GLYPH_H = 7;
+const GLYPH_W = 5;
+/** Dots from the start of one character to the start of the next. */
 export const ADVANCE = GLYPH_W + 1;
 
 const REPLACEMENTS = { '’': "'", '‘': "'", '“': '"', '”': '"', '–': '-', '—': '-', '·': '•', '…': '.' };
@@ -84,20 +83,19 @@ export function normalise(text) {
   return out;
 }
 
-// Pre-compute each glyph as a list of lit [x, y] dots.
-const DOTS = {};
-for (const [ch, rows] of Object.entries(GLYPHS)) {
-  const dots = [];
-  rows.forEach((row, y) => [...row].forEach((c, x) => c === '#' && dots.push([x, y])));
-  DOTS[ch] = dots;
-}
+// Drawn for any character the font doesn't have: an empty box.
+const UNKNOWN = ['#####', '#...#', '#...#', '#...#', '#...#', '#...#', '#####'];
 
+/** The lit [x, y] dots of a glyph's rows. */
+const dotsOf = (rows) => rows.flatMap((row, y) => [...row].flatMap((c, x) => (c === '#' ? [[x, y]] : [])));
+
+// Pre-compute each glyph's dots once.
+const DOTS = Object.fromEntries(Object.entries(GLYPHS).map(([ch, rows]) => [ch, dotsOf(rows)]));
+const UNKNOWN_DOTS = dotsOf(UNKNOWN);
+
+/** The lit dots of a character, as [x, y] pairs. */
 export function glyph(ch) {
-  return DOTS[ch] ?? DOTS['?_'];
-}
-
-export function hasGlyph(ch) {
-  return ch in DOTS;
+  return DOTS[ch] ?? UNKNOWN_DOTS;
 }
 
 /** Width in dots of a string at the given integer scale (no trailing gap). */
@@ -105,6 +103,3 @@ export function textWidth(text, scale = 1) {
   const n = [...text].length;
   return n ? (n * ADVANCE - 1) * scale : 0;
 }
-
-/** Characters used for the scramble effect. */
-export const SCRAMBLE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#*+=<>/%&';

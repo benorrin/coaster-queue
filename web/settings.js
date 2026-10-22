@@ -1,4 +1,8 @@
+// What can be configured, and how each setting is parsed, saved and stepped. Settings
+// start from the server's, then this browser's saved changes, then the URL.
+
 import { THEMES } from './fx.js';
+import { clamp } from './util.js';
 
 const STORAGE_KEY = 'coaster-queue';
 const DEFAULT_PARKS = ['alton-towers', 'thorpe-park']; // fallback if the server can't be asked
@@ -35,7 +39,6 @@ const param = (item) => item.param ?? item.key;
 
 const same = (a, b) => (Array.isArray(a) ? Array.isArray(b) && a.join() === b.join() : a === b);
 const round = (v) => Math.round(v * 100) / 100;
-const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 /** Turn a stored or query-string value into a valid setting, or undefined. */
 function parse(item, raw) {

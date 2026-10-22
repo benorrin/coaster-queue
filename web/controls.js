@@ -1,12 +1,19 @@
-import { ROWS_Y, ROW_PITCH } from './board.js';
-import { SCHEMA, byKey, change, format, save } from './settings.js';
+// Keyboard, mouse and touch controls, and the kiosk niceties (idle cursor, wake lock).
 
-const mod = (n, m) => ((n % m) + m) % m;
+import { ROWS_Y, ROW_PITCH } from './layout.js';
+import { SCHEMA, byKey, change, format, save } from './settings.js';
+import { mod } from './util.js';
+
+const TOAST_MS = 1600;
+const CURSOR_IDLE_MS = 2500;
 
 export function setupControls({ state, matrix, demo }) {
-  const toast = (text) => (state.toast = { text, until: performance.now() + 1600 });
+  const { menu, picker } = state;
+  const toast = (text) => (state.toast = { text, until: performance.now() + TOAST_MS });
 
-  /** Step a setting, apply any side effects and tell the viewer. */
+  // ---- settings ----
+
+  /** Step a setting, apply any side effects and (unless `quiet`) tell the viewer. */
   function nudge(key, dir = 1, quiet = false) {
     const item = byKey(key);
     const before = state[key];
@@ -15,6 +22,7 @@ export function setupControls({ state, matrix, demo }) {
     if (!quiet) toast(`${item.label} ${format(item, state[key], state)}`);
   }
 
+  /** The side effects of a setting having changed. */
   function applied(key, before) {
     if (key === 'cols') matrix.setCols(state.cols);
     // Keep the current page and progress when the page time changes.
@@ -27,6 +35,7 @@ export function setupControls({ state, matrix, demo }) {
     if (key === 'parks' || key === 'show') state.feed.poll();
   }
 
+  /** Show just the i-th chosen park, or all of them for null. */
   function pickPark(i) {
     const park = i == null ? null : state.feed.parks[i];
     if (i != null && !park) return;
@@ -35,30 +44,38 @@ export function setupControls({ state, matrix, demo }) {
     toast(park ? park.name.toUpperCase() : 'ALL SELECTED PARKS');
   }
 
+  /** Move to the next (+1) or previous (-1) page. */
   const turn = (delta) => {
     const n = Math.max(1, state.slideCount);
-    const idx = mod(Math.floor(state.slideTime / state.dwell), n);
-    state.slideTime = mod(idx + delta, n) * state.dwell + 0.001;
+    const index = mod(Math.floor(state.slideTime / state.dwell), n);
+    state.slideTime = mod(index + delta, n) * state.dwell + 0.001; // just inside the new page
     state.pageAge = 0;
   };
 
-  const menu = state.menu;
+  // ---- overlays: menu, picker and help ----
+
   const openMenu = (open = !menu.open) => {
     menu.open = open;
     if (open) state.help = false;
   };
-  const picker = state.picker;
+
+  const toggleHelp = () => {
+    openMenu(false);
+    state.help = !state.help;
+  };
+
   // The picker edits either the chosen parks or the chosen ride groups.
   const pickerItems = () => (picker.key === 'show' ? state.feed.groups : state.feed.directory);
+
   const openPicker = (open = !picker.open, key = picker.key) => {
     picker.open = open;
-    if (open) {
-      picker.key = key;
-      state.help = false;
-      picker.index = Math.max(0, pickerItems().findIndex((p) => state[key].includes(p.id)));
-    }
+    if (!open) return;
+    picker.key = key;
+    state.help = false;
+    picker.index = Math.max(0, pickerItems().findIndex((p) => state[key].includes(p.id)));
   };
-  // Tick or untick the entry under the cursor; at least one park always stays chosen.
+
+  /** Tick or untick the entry under the cursor; at least one park always stays chosen. */
   const toggleItem = () => {
     const item = pickerItems()[picker.index];
     if (!item) return;
@@ -67,12 +84,27 @@ export function setupControls({ state, matrix, demo }) {
     if (key === 'parks' && on && state.parks.length === 1) return;
     const chosen = new Set(state[key]);
     on ? chosen.delete(item.id) : chosen.add(item.id);
-    state[key] = pickerItems().map((p) => p.id).filter((id) => chosen.has(id));
+    state[key] = pickerItems().map((p) => p.id).filter((id) => chosen.has(id)); // keep the list's order
     applied(key);
   };
-  const pickerActions = {
-    ArrowUp: () => (picker.index = mod(picker.index - 1, Math.max(1, pickerItems().length))),
-    ArrowDown: () => (picker.index = mod(picker.index + 1, Math.max(1, pickerItems().length))),
+
+  /** Change the selected menu entry, or open the picker if it's a list. */
+  const step = (dir) => {
+    const item = SCHEMA[menu.index];
+    if (item.kind === 'list') openPicker(true, item.key);
+    else nudge(item.key, dir, true);
+  };
+
+  /** Up and down move the cursor round a list. */
+  const listKeys = (list, count) => ({
+    ArrowUp: () => (list.index = mod(list.index - 1, Math.max(1, count()))),
+    ArrowDown: () => (list.index = mod(list.index + 1, Math.max(1, count()))),
+  });
+
+  // ---- key bindings (the menu's and picker's take over while they're open) ----
+
+  const pickerKeys = {
+    ...listKeys(picker, () => pickerItems().length),
     ' ': toggleItem,
     Enter: toggleItem,
     p: () => openPicker(false),
@@ -80,16 +112,8 @@ export function setupControls({ state, matrix, demo }) {
     Escape: () => openPicker(false),
   };
 
-  const step = (dir) => {
-    const item = SCHEMA[menu.index];
-    if (item.kind === 'list') openPicker(true, item.key);
-    else nudge(item.key, dir, true);
-  };
-
-  // While the menu is open, arrows move and change values instead of paging.
-  const menuActions = {
-    ArrowUp: () => (menu.index = mod(menu.index - 1, SCHEMA.length)),
-    ArrowDown: () => (menu.index = mod(menu.index + 1, SCHEMA.length)),
+  const menuKeys = {
+    ...listKeys(menu, () => SCHEMA.length),
     ArrowLeft: () => step(-1),
     ArrowRight: () => step(1),
     Enter: () => step(1),
@@ -98,10 +122,13 @@ export function setupControls({ state, matrix, demo }) {
     Escape: () => openMenu(false),
   };
 
-  const actions = {
+  const boardKeys = {
     s: () => openMenu(),
     p: () => openPicker(!picker.open, 'parks'),
     r: () => openPicker(!picker.open, 'show'),
+    h: toggleHelp,
+    '?': toggleHelp,
+    Escape: () => (state.help = false),
     ' ': () => {
       state.paused = !state.paused;
       toast(state.paused ? 'PAUSED' : 'RESUMED');
@@ -121,70 +148,75 @@ export function setupControls({ state, matrix, demo }) {
       if (document.fullscreenElement) document.exitFullscreen();
       else document.documentElement.requestFullscreen?.().catch(() => {});
     },
-    h: () => {
-      openMenu(false);
-      state.help = !state.help;
-    },
-    '?': () => {
-      openMenu(false);
-      state.help = !state.help;
-    },
-    Escape: () => (state.help = false),
   };
 
   addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-    const act =
-      (picker.open && pickerActions[key]) || (!picker.open && menu.open && menuActions[key]) || (!picker.open && actions[key]);
+    const act = picker.open ? pickerKeys[key] : (menu.open && menuKeys[key]) || boardKeys[key];
     if (!act) return;
     e.preventDefault();
     act();
     save(state, demo);
   });
 
-  // Touch and mouse: left third goes back, anywhere else goes forward.
-  const board = matrix.canvas;
-  board.addEventListener('click', (e) => {
-    if (picker.open) {
-      // Tap a park to tick it, or tap above the list to close.
-      const dot = matrix.dotAt(e.clientX, e.clientY);
-      const row = Math.floor((dot.y - ROWS_Y) / ROW_PITCH);
-      if (row < 0 || row >= picker.visible) return openPicker(false);
-      picker.index = picker.offset + row;
-      toggleItem();
-      return save(state, demo);
-    }
-    if (!menu.open) return turn(e.clientX < board.clientWidth / 3 ? -1 : 1);
-    // In the menu: tap above the list to close, or tap a row's left/right half to step it.
-    const dot = matrix.dotAt(e.clientX, e.clientY);
+  // ---- touch and mouse ----
+
+  /** The list entry under a tapped dot, or -1 if the tap was off the list. */
+  const entryAt = (dot, list) => {
     const row = Math.floor((dot.y - ROWS_Y) / ROW_PITCH);
-    if (row < 0 || row >= menu.visible) return openMenu(false);
-    menu.index = menu.offset + row;
-    step(dot.x < matrix.cols / 2 ? -1 : 1);
+    return row >= 0 && row < list.visible ? list.offset + row : -1;
+  };
+
+  matrix.canvas.addEventListener('click', (e) => {
+    // On the board: the left third goes back a page, anywhere else goes forward.
+    if (!picker.open && !menu.open) {
+      turn(e.clientX < matrix.canvas.clientWidth / 3 ? -1 : 1);
+      return;
+    }
+    // In an overlay: tap an entry to use it (menu: its left half steps down, right half up),
+    // or tap off the list to close.
+    const dot = matrix.dotAt(e.clientX, e.clientY);
+    const list = picker.open ? picker : menu;
+    const index = entryAt(dot, list);
+    if (index < 0) {
+      picker.open ? openPicker(false) : openMenu(false);
+      return;
+    }
+    list.index = index;
+    if (picker.open) toggleItem();
+    else step(dot.x < matrix.cols / 2 ? -1 : 1);
     save(state, demo);
   });
+
   document.getElementById('settings-btn')?.addEventListener('click', () => {
     openMenu();
     save(state, demo);
   });
 
-  // Hide the cursor when idle so a kiosk screen stays clean.
-  let idle;
+  hideCursorWhenIdle();
+  keepScreenOn();
+}
+
+/** Hide the mouse cursor when it's idle so a kiosk screen stays clean. */
+function hideCursorWhenIdle() {
+  let timer;
   const wake = () => {
     document.body.classList.remove('idle');
-    clearTimeout(idle);
-    idle = setTimeout(() => document.body.classList.add('idle'), 2500);
+    clearTimeout(timer);
+    timer = setTimeout(() => document.body.classList.add('idle'), CURSOR_IDLE_MS);
   };
   addEventListener('pointermove', wake);
   wake();
+}
 
-  // Keep the screen on while the board is up.
-  const hold = async () => {
+/** Ask the browser not to let the screen sleep while the board is up. */
+function keepScreenOn() {
+  const request = async () => {
     try {
       await navigator.wakeLock?.request('screen');
     } catch {}
   };
-  hold();
-  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && hold());
+  request();
+  document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && request());
 }

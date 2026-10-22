@@ -1,13 +1,17 @@
-import { Matrix } from './led.js';
-import { Feed } from './data.js';
+// Entry point: loads the settings, wires the feed, controls and matrix together, and
+// runs the draw loop.
+
 import { drawBoard } from './board.js';
-import { bootWipe, shade } from './fx.js';
 import { setupControls } from './controls.js';
+import { Feed } from './data.js';
+import { bootWipe, shade } from './fx.js';
+import { Matrix } from './led.js';
 import { load, sanitise, sanitiseGroups } from './settings.js';
+import { getJson } from './util.js';
 
 const params = new URLSearchParams(location.search);
 // The server's settings are the baseline; this browser's own changes and the URL sit on top.
-const server = await fetch('/api/settings').then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
+const server = await getJson('/api/settings').catch(() => ({}));
 const settings = load(params, server);
 const demo = params.has('demo');
 

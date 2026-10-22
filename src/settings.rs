@@ -36,7 +36,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            parks: DEFAULT_PARKS.iter().map(|s| s.to_string()).collect(),
+            parks: DEFAULT_PARKS.map(String::from).to_vec(),
             show: Vec::new(),
             dwell: 8,
             show_closed: false,
@@ -75,7 +75,8 @@ pub struct Patch {
 }
 
 const LIST_KEYS: [&str; 2] = ["parks", "show"];
-const BOOL_KEYS: [&str; 7] = ["show_closed", "gradients", "weather", "feels_like", "clock24", "flip", "shine"];
+const BOOL_KEYS: [&str; 7] =
+    ["show_closed", "gradients", "weather", "feels_like", "clock24", "flip", "shine"];
 
 fn parse_bool(v: &str) -> Option<bool> {
     match v.to_ascii_lowercase().as_str() {
@@ -94,7 +95,11 @@ impl Patch {
             let raw = raw.trim();
             let value = if LIST_KEYS.contains(&key.as_str()) {
                 serde_json::Value::Array(
-                    raw.split(',').map(str::trim).filter(|s| !s.is_empty()).map(serde_json::Value::from).collect(),
+                    raw.split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(serde_json::Value::from)
+                        .collect(),
                 )
             } else if BOOL_KEYS.contains(&key.as_str()) {
                 parse_bool(raw)
@@ -111,7 +116,9 @@ impl Patch {
 
 /// Group and park names are lowercase words joined by hyphens or underscores.
 pub fn valid_id(s: &str) -> bool {
-    !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+    !s.is_empty()
+        && s.len() <= 64
+        && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
 fn ids(what: &str, list: Vec<String>, max: usize) -> Result<Vec<String>, String> {
@@ -192,7 +199,14 @@ mod tests {
     #[test]
     fn applies_pairs() {
         let mut s = Settings::default();
-        let p = Patch::from_pairs(&pairs(&[("dwell", "12"), ("parks", "thorpe-park, alton-towers"), ("show_closed", "on"), ("theme", "amber"), ("feels_like", "off")])).unwrap();
+        let p = Patch::from_pairs(&pairs(&[
+            ("dwell", "12"),
+            ("parks", "thorpe-park, alton-towers"),
+            ("show_closed", "on"),
+            ("theme", "amber"),
+            ("feels_like", "off"),
+        ]))
+        .unwrap();
         s.apply(p).unwrap();
         assert_eq!((s.dwell, s.show_closed, s.theme.as_str(), s.feels_like), (12, true, "amber", false));
         assert_eq!(s.parks, ["thorpe-park", "alton-towers"]);
@@ -214,7 +228,11 @@ mod tests {
     #[test]
     fn dedupes_lists() {
         let mut s = Settings::default();
-        s.apply(Patch { show: Some(vec!["thrill".into(), "thrill".into(), "family".into()]), ..Patch::default() }).unwrap();
+        s.apply(Patch {
+            show: Some(vec!["thrill".into(), "thrill".into(), "family".into()]),
+            ..Patch::default()
+        })
+        .unwrap();
         assert_eq!(s.show, ["thrill", "family"]);
     }
 }
