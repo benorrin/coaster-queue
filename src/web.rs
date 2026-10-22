@@ -173,7 +173,7 @@ pub fn run(cfg: Config) -> io::Result<()> {
     spawn_poller(cache.clone(), cfg.interval);
 
     let listener = TcpListener::bind((cfg.bind.as_str(), cfg.port))?;
-    eprintln!("merlin-queue serving on http://{}:{}", cfg.bind, cfg.port);
+    eprintln!("coaster-queue serving on http://{}:{}", cfg.bind, cfg.port);
 
     let cfg = Arc::new(cfg);
     let active = Arc::new(AtomicUsize::new(0));

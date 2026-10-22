@@ -1,4 +1,4 @@
-# merlin-queue
+# coaster-queue
 
 Live ride wait times for Alton Towers and Thorpe Park, from [Queue-Times.com](https://queue-times.com/).
 Two front ends share one binary: a terminal UI and a web page that shows the queues on a simulated RGB LED matrix.
@@ -6,7 +6,7 @@ Two front ends share one binary: a terminal UI and a web page that shows the que
 ## Terminal
 
 ```
-merlin-queue [alton] [thorpe] [-a|--all] [-i|--interval SECS]
+coaster-queue [alton] [thorpe] [-a|--all] [-i|--interval SECS]
 ```
 
 Keys: `q` quit, `r` refresh, `a` toggle closed rides.
@@ -14,7 +14,7 @@ Keys: `q` quit, `r` refresh, `a` toggle closed rides.
 ## Web board
 
 ```
-merlin-queue serve [-b ADDR] [-p PORT] [-i SECS] [--web-dir DIR]
+coaster-queue serve [-b ADDR] [-p PORT] [-i SECS] [--web-dir DIR]
 ```
 
 Serves the board at <http://127.0.0.1:8080>. The server polls queue-times in the background

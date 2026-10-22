@@ -221,7 +221,7 @@ fn render(
     let (cols, rows) = term_size();
     let body_h = rows.saturating_sub(2);
     let mut lines = vec![format!(
-        " {BOLD}MERLIN QUEUE{RESET}{DIM}  live ride wait times{RESET}"
+        " {BOLD}COASTER QUEUE{RESET}{DIM}  live ride wait times{RESET}"
     )];
 
     let n = parks.len();
@@ -290,7 +290,7 @@ fn serve(args: impl Iterator<Item = String>) {
             "-i" | "--interval" => cfg.interval = value("--interval").parse().unwrap_or(30).max(10),
             "--web-dir" => cfg.web_dir = Some(value("--web-dir").into()),
             "-h" | "--help" => {
-                println!("usage: merlin-queue serve [-b|--bind ADDR] [-p|--port PORT] [-i|--interval SECS]");
+                println!("usage: coaster-queue serve [-b|--bind ADDR] [-p|--port PORT] [-i|--interval SECS]");
                 println!("                          [--web-dir DIR]");
                 println!("serves the LED board at http://ADDR:PORT (default 127.0.0.1:8080)");
                 return;
@@ -322,8 +322,8 @@ fn main() {
                 interval = args.next().and_then(|s| s.parse().ok()).unwrap_or(30).max(10)
             }
             "-h" | "--help" => {
-                println!("usage: merlin-queue [alton] [thorpe] [-a|--all] [-i|--interval SECS]");
-                println!("       merlin-queue serve --help");
+                println!("usage: coaster-queue [alton] [thorpe] [-a|--all] [-i|--interval SECS]");
+                println!("       coaster-queue serve --help");
                 println!("keys:  q quit · r refresh now · a toggle closed rides");
                 return;
             }
