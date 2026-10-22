@@ -1,4 +1,6 @@
-use serde::Deserialize;
+mod queue;
+
+use queue::{fetch, Ride, PARKS};
 use std::{
     env,
     io::{self, Write},
@@ -7,11 +9,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-
-const PARKS: [(&str, &str, u32); 2] = [
-    ("alton", "Alton Towers", 1),
-    ("thorpe", "Thorpe Park", 2),
-];
 
 const RESET: &str = "\x1b[0m";
 const BOLD: &str = "\x1b[1m";
@@ -24,43 +21,6 @@ const CYAN: &str = "\x1b[36m";
 const BAR_WIDTH: usize = 8;
 const BAR_MAX_MINS: u32 = 60;
 const WIDE_LAYOUT_MIN_COLS: usize = 90;
-
-#[derive(Deserialize)]
-struct Ride {
-    name: String,
-    is_open: bool,
-    wait_time: u32,
-}
-
-#[derive(Deserialize)]
-struct Land {
-    rides: Vec<Ride>,
-}
-
-#[derive(Deserialize)]
-struct Response {
-    lands: Vec<Land>,
-    rides: Vec<Ride>,
-}
-
-fn fetch(id: u32) -> Result<Vec<Ride>, String> {
-    let url = format!("https://queue-times.com/parks/{id}/queue_times.json");
-    let resp: Response = ureq::get(&url)
-        .timeout(Duration::from_secs(10))
-        .call()
-        .map_err(|e| e.to_string())?
-        .into_json()
-        .map_err(|e| e.to_string())?;
-    let mut rides = resp.rides;
-    rides.extend(resp.lands.into_iter().flat_map(|l| l.rides));
-    rides.sort_by(|a, b| {
-        b.is_open
-            .cmp(&a.is_open)
-            .then(b.wait_time.cmp(&a.wait_time))
-            .then(a.name.cmp(&b.name))
-    });
-    Ok(rides)
-}
 
 // ---- terminal ----------------------------------------------------------
 
