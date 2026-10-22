@@ -97,7 +97,7 @@ menu drawn on the matrix, `p` to choose parks and `r` to choose ride groups.
 The page starts from the server's settings. Changes made in a browser are remembered in that browser (and
 in the URL, so a tuned board can be bookmarked), and only for settings that viewer changed; the rest keep
 following the server. URL parameters: `parks`, `show`, `park`, `theme`, `dwell`, `brightness`, `cols`,
-`gradients`, `weather`, `clock24`, `flip`, `shine`, `closed`, with `parks=all`/`show=all` spelling
+`gradients`, `weather`, `clock24`, `flip`, `shine`, `closed`, where `park=all` and `show=all` mean
 "everything". Add `?demo` for made-up queues when the parks are shut.
 
 | Key | Action |
