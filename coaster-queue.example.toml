@@ -1,0 +1,55 @@
+# Example coaster-queue config. Copy to one of:
+#   ./coaster-queue.toml
+#   ~/.config/coaster-queue/config.toml
+#   /etc/coaster-queue/config.toml
+# or pass it with --config. Command-line flags override anything here, and the API
+# can change the settings while the program is running (changes are not saved back).
+# Any key that isn't recognised is an error, so typos are caught at startup.
+
+# What to run: "led" (the main display), "api", "web" (browser display; includes api).
+run = ["led", "api"]
+
+# ---- settings (also available as -s KEY=VALUE and through the API) ----
+
+parks = ["alton-towers", "thorpe-park"]   # slugs from `coaster-queue --list-parks`
+show = []                                 # ride groups to restrict to; empty = every ride
+dwell = 8                                 # seconds each page of rides stays up (2-300)
+show_closed = false
+interval = 60                             # seconds between queue-time polls (10-3600)
+brightness = 1.0                          # 0.1-1.0
+theme = "rgb"                             # rgb, amber, green, ice, rainbow
+gradients = true
+weather = true
+feels_like = true                         # include "feels like" in the weather line
+clock24 = true
+flip = true
+shine = true
+cols = 200                                # dots across the web display (64-400)
+
+[server]
+bind = "127.0.0.1"        # use "0.0.0.0" to reach it from other devices
+port = 8080
+max_connections = 32
+# api_token = "change-me" # if set, changing settings through the API needs
+                          #   Authorization: Bearer change-me
+
+# ---- custom groups and ride lists ----
+# Built-in groups: thrill, family, kids, water, transport, dark-rides, scare, extras
+# (see `coaster-queue --list-groups`). Define your own, or override a built-in one
+# by reusing its name. Patterns ignore case and may use * as a wildcard.
+#
+#   rides    ride names to match
+#   lands    land (area of the park) names to match
+#   include  other groups to include
+#   parks    limit the group to these park slugs
+#
+# Use a group by putting its name in `show`, or with -S on the command line.
+
+[groups.my-favourites]
+label = "My favourites"
+rides = ["Nemesis*", "The Smiler", "Stealth", "Oblivion"]
+
+[groups.big-day-out]
+label = "Big day out"
+include = ["thrill", "transport"]
+parks = ["alton-towers"]
