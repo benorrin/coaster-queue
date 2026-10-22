@@ -97,7 +97,7 @@ function drawRide(m, ride, key, x0, w, y, state) {
   }
 
   // Long queues breathe so they catch the eye from across the concourse.
-  const pulse = ride.wait_time >= 50 ? 0.75 + 0.25 * Math.sin(now / 170) : 1;
+  const pulse = ride.wait_time >= 50 ? 0.85 + 0.15 * Math.sin(now / 170) : 1;
   const c = scale(waitColor(ride.wait_time), pulse);
   flap.draw(m, `${key}.n`, name, nameX + offset, y, WHITE, now, nameOpts);
   if (barW) drawBar(m, `${key}.b`, barX, y + 2, barW, ride.wait_time, now, state.gradients);
