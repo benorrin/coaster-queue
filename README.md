@@ -32,7 +32,7 @@ along the bottom summarises each park.
 | `←` `→` | previous / next page (or tap the left third / the rest of the screen) |
 | `t` | theme: rgb, amber, green, ice, rainbow |
 | `↑` `↓` | brightness |
-| `g` `d` | glow, dot density |
+| `d` | dot density |
 | `c` | show closed rides |
 | `1` `2` `0` | one park / all parks |
 | `f` | fullscreen |

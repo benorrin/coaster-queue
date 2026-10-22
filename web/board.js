@@ -209,7 +209,7 @@ const HELP = [
   ['LEFT RIGHT', 'PAGE'],
   ['T', 'THEME'],
   ['UP DOWN', 'BRIGHTNESS'],
-  ['G D', 'GLOW AND DOT DENSITY'],
+  ['D', 'DOT DENSITY'],
   ['C', 'CLOSED RIDES'],
   ['1 2 0', 'ONE PARK OR ALL'],
   ['F', 'FULLSCREEN'],

@@ -37,7 +37,7 @@ function frame(now) {
   drawBoard(matrix, state);
   shade(matrix, state.theme, now);
   bootWipe(matrix, now);
-  matrix.present(state.brightness, state.glow);
+  matrix.present(state.brightness);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

@@ -1,7 +1,7 @@
 import { THEMES } from './fx.js';
 
 const DENSITIES = [120, 160, 200, 256, 320];
-export const DEFAULTS = { theme: 'rgb', cols: 200, dwell: 8, brightness: 1, glow: 1, park: null };
+export const DEFAULTS = { theme: 'rgb', cols: 200, dwell: 8, brightness: 1, park: null };
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const mod = (n, m) => ((n % m) + m) % m;
@@ -18,7 +18,6 @@ export function readSettings(params) {
     cols: num('cols', DEFAULTS.cols, 64, 400),
     dwell: num('dwell', DEFAULTS.dwell, 2, 120),
     brightness: num('brightness', DEFAULTS.brightness, 0.1, 1),
-    glow: num('glow', DEFAULTS.glow, 0, 1.5),
     showClosed: params.get('closed') === '1',
     park: params.get('park') || DEFAULTS.park,
   };
@@ -27,7 +26,7 @@ export function readSettings(params) {
 /** Keep the URL in step with the settings so a tuned board can be bookmarked. */
 function writeSettings(state, demo) {
   const params = new URLSearchParams();
-  for (const key of ['theme', 'cols', 'dwell', 'brightness', 'glow', 'park']) {
+  for (const key of ['theme', 'cols', 'dwell', 'brightness', 'park']) {
     const v = state[key];
     if (v === DEFAULTS[key] || v == null) continue;
     params.set(key, typeof v === 'number' ? String(Math.round(v * 100) / 100) : v);
@@ -69,10 +68,6 @@ export function setupControls({ state, matrix, demo }) {
     ArrowDown: () => {
       state.brightness = clamp(Math.round((state.brightness - 0.1) * 10) / 10, 0.1, 1);
       toast(`BRIGHTNESS ${Math.round(state.brightness * 100)}%`);
-    },
-    g: () => {
-      state.glow = state.glow >= 1 ? 0 : state.glow + 0.5;
-      toast(state.glow ? `GLOW ${Math.round(state.glow * 100)}%` : 'GLOW OFF');
     },
     c: () => {
       state.showClosed = !state.showClosed;

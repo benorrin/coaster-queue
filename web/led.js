@@ -26,12 +26,48 @@ export function luma([r, g, b]) {
 
 // ---- the matrix ----------------------------------------------------------
 
-const BG = '#040508';
-const OFF_DOT = 'rgba(150, 165, 200, 0.075)';
+const VERT = `
+attribute vec2 p;
+varying vec2 uv;
+void main() {
+  uv = vec2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
+  gl_Position = vec4(p, 0.0, 1.0);
+}`;
+
+// One quad covers the board; each fragment finds its dot, looks the colour up
+// in the buffer texture and draws a round LED over a faint unlit one.
+const FRAG = `
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+uniform sampler2D tex;
+uniform vec2 grid;
+uniform float bright;
+uniform float edge;
+varying vec2 uv;
+void main() {
+  vec2 g = uv * grid;
+  vec2 cell = floor(g);
+  float mask = 1.0 - smoothstep(0.4 - edge, 0.4 + edge, length(fract(g) - 0.5));
+  vec3 lit = texture2D(tex, (cell + 0.5) / grid).rgb * bright;
+  vec3 col = vec3(0.016, 0.02, 0.031) + vec3(0.59, 0.65, 0.78) * 0.075 * mask + lit * mask;
+  gl_FragColor = vec4(col, 1.0);
+}`;
+
+function compile(gl, type, src) {
+  const sh = gl.createShader(type);
+  gl.shaderSource(sh, src);
+  gl.compileShader(sh);
+  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+  return sh;
+}
 
 /**
  * A grid of RGB LEDs drawn on a canvas. Callers paint into `buf` (RGBA, one
- * entry per dot) with the drawing helpers, then call `present()`.
+ * entry per dot) with the drawing helpers, then call `present()`, which
+ * uploads the buffer as a texture and lets the GPU draw every dot at once.
  *
  * The grid is `cols` dots wide whatever the screen size; the row count follows
  * from the aspect ratio, so layouts stay proportional on any display.
@@ -39,9 +75,47 @@ const OFF_DOT = 'rgba(150, 165, 200, 0.075)';
 export class Matrix {
   constructor(canvas, cols = 128) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d', { alpha: false });
     this.targetCols = cols;
+    this.gl = canvas.getContext('webgl', { alpha: false, antialias: false, powerPreference: 'low-power' });
+    if (!this.gl) throw new Error('WebGL is not available');
+    this.initGl();
+    canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
+    canvas.addEventListener('webglcontextrestored', () => {
+      this.initGl();
+      this.resize();
+    });
     this.resize();
+  }
+
+  initGl() {
+    const gl = this.gl;
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl, gl.VERTEX_SHADER, VERT));
+    gl.attachShader(prog, compile(gl, gl.FRAGMENT_SHADER, FRAG));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    gl.useProgram(prog);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, 'p');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+    this.u = {
+      grid: gl.getUniformLocation(prog, 'grid'),
+      bright: gl.getUniformLocation(prog, 'bright'),
+      edge: gl.getUniformLocation(prog, 'edge'),
+    };
+    this.tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.tex);
+    for (const [k, v] of [
+      [gl.TEXTURE_MIN_FILTER, gl.NEAREST],
+      [gl.TEXTURE_MAG_FILTER, gl.NEAREST],
+      [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE],
+      [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE],
+    ]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+    gl.clearColor(0.016, 0.02, 0.031, 1);
   }
 
   setCols(cols) {
@@ -60,43 +134,10 @@ export class Matrix {
     this.cols = Math.max(48, Math.min(this.targetCols, Math.floor(cssW / 3)));
     this.pitch = this.canvas.width / this.cols;
     this.rows = Math.max(16, Math.floor(this.canvas.height / this.pitch));
-    this.offY = (this.canvas.height - this.rows * this.pitch) / 2;
 
     this.buf = new Uint8ClampedArray(this.cols * this.rows * 4);
-    this.img = new ImageData(this.cols, this.rows);
-    this.bloom = [1, 2, 4].map((div) => {
-      const c = document.createElement('canvas');
-      c.width = Math.max(1, Math.ceil(this.cols / div));
-      c.height = Math.max(1, Math.ceil(this.rows / div));
-      return c;
-    });
-    this.buildOffLayer();
+    this.bytes = new Uint8Array(this.buf.buffer);
     this.clear();
-  }
-
-  buildOffLayer() {
-    const c = (this.off = document.createElement('canvas'));
-    c.width = this.canvas.width;
-    c.height = this.canvas.height;
-    const g = c.getContext('2d');
-    g.fillStyle = BG;
-    g.fillRect(0, 0, c.width, c.height);
-    g.fillStyle = OFF_DOT;
-    for (let y = 0; y < this.rows; y++) for (let x = 0; x < this.cols; x++) this.dot(g, x, y);
-  }
-
-  dot(g, x, y) {
-    const p = this.pitch;
-    const cx = (x + 0.5) * p;
-    const cy = this.offY + (y + 0.5) * p;
-    const r = p * 0.4;
-    if (p < 4) {
-      g.fillRect(cx - r, cy - r, r * 2, r * 2);
-    } else {
-      g.beginPath();
-      g.arc(cx, cy, r, 0, Math.PI * 2);
-      g.fill();
-    }
   }
 
   // ---- drawing -----------------------------------------------------------
@@ -154,56 +195,20 @@ export class Matrix {
 
   // ---- output ------------------------------------------------------------
 
-  /** Paint `buf` to the canvas. `brightness` is 0-1; `glow` scales the bloom. */
-  present(brightness = 1, glow = 1) {
-    const { ctx, canvas, buf, img, cols, rows } = this;
-    const data = img.data;
-    const k = brightness;
+  /** Paint `buf` to the canvas. `brightness` is 0-1. */
+  present(brightness = 1) {
+    const { gl, u, canvas, cols, rows, pitch } = this;
+    if (gl.isContextLost()) return;
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, cols, rows, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.bytes);
+    gl.uniform2f(u.grid, cols, rows);
+    gl.uniform1f(u.bright, brightness);
+    gl.uniform1f(u.edge, Math.min(0.25, 0.7 / pitch));
 
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.drawImage(this.off, 0, 0);
-
-    const p = this.pitch;
-    const small = p < 4;
-    const r = p * 0.4;
-    for (let y = 0; y < rows; y++) {
-      for (let x = 0; x < cols; x++) {
-        const i = (y * cols + x) * 4;
-        const R = buf[i] * k, G = buf[i + 1] * k, B = buf[i + 2] * k;
-        data[i] = R;
-        data[i + 1] = G;
-        data[i + 2] = B;
-        data[i + 3] = 255;
-        if (R < 2 && G < 2 && B < 2) continue;
-        ctx.fillStyle = `rgb(${R | 0},${G | 0},${B | 0})`;
-        const cx = (x + 0.5) * p;
-        const cy = this.offY + (y + 0.5) * p;
-        if (small) {
-          ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
-        } else {
-          ctx.beginPath();
-          ctx.arc(cx, cy, r, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-    }
-
-    // Bloom: the dot image upscaled with smoothing gives a soft halo around each
-    // LED; two successive halvings give a wider, fainter one.
-    this.bloom[0].getContext('2d').putImageData(img, 0, 0);
-    for (let n = 1; n < this.bloom.length; n++) {
-      const g = this.bloom[n].getContext('2d');
-      g.imageSmoothingEnabled = true;
-      g.drawImage(this.bloom[n - 1], 0, 0, this.bloom[n].width, this.bloom[n].height);
-    }
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.imageSmoothingEnabled = true;
-    const alphas = [0.5, 0.45, 0.4];
-    this.bloom.forEach((c, n) => {
-      ctx.globalAlpha = alphas[n] * glow;
-      ctx.drawImage(c, 0, this.offY, canvas.width, this.rows * p);
-    });
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
+    // Rows are a whole number of dots, so centre the grid in any leftover height.
+    const used = Math.round(rows * pitch);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.viewport(0, Math.floor((canvas.height - used) / 2), canvas.width, used);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 }
