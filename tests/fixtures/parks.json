@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1,
+    "name": "Merlin Entertainments Group",
+    "parks": [
+      {"id": 1, "name": "Alton Towers", "country": "United Kingdom", "continent": "Europe",
+       "latitude": "52.9871", "longitude": "-1.8872", "timezone": "Europe/London"},
+      {"id": 2, "name": "Thorpe Park", "country": "England", "continent": "Europe",
+       "latitude": "51.4034", "longitude": "-0.5130", "timezone": "Europe/London"},
+      {"id": 61, "name": "Gardaland", "country": "Italy", "continent": "Europe",
+       "latitude": "45.4503", "longitude": "10.7126", "timezone": "Europe/Rome"}
+    ]
+  },
+  {
+    "id": 7,
+    "name": "Independent",
+    "parks": [
+      {"id": 99, "name": "Blackpool Pleasure Beach", "country": "England", "continent": "Europe",
+       "latitude": "53.7886", "longitude": "-3.0553", "timezone": "Europe/London"},
+      {"id": 100, "name": "Tayto Park", "country": "Ireland", "continent": "Europe",
+       "latitude": "53.5", "longitude": "-6.6", "timezone": "Europe/Dublin"},
+      {"id": 101, "name": "Mystery Park", "country": "Scotland", "continent": "Europe",
+       "latitude": "not a number", "longitude": "", "timezone": "Europe/London"}
+    ]
+  }
+]

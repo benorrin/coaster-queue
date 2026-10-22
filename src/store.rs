@@ -317,3 +317,6 @@ fn refresh_directory(store: &Store) -> Duration {
         _ => DIRECTORY_RETRY,
     }
 }
+
+#[cfg(test)]
+mod tests;
