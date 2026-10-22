@@ -149,18 +149,39 @@ function drawPanel(m, park, slide, accent, x0, w, progress, state) {
   slide.rides.forEach((ride, i) => drawRide(m, ride, `${park.id}.${i}`, x0, w, ROWS_Y + i * ROW_PITCH, state));
 }
 
-function drawWeather(m, park, x0, x1, y, now) {
-  const wx = summarise(park?.weather);
+const WEATHER_SPEED = 24; // dots per second when the weather is too long to fit
+const WEATHER_GAP = '      ';
+
+/** Weather for a park; fits as a static line, otherwise scrolls round in the space it has. */
+function drawWeather(m, park, x0, x1, y, state) {
+  const { now } = state;
+  const wx = summarise(park?.weather, { feelsLike: state.feelsLike });
   if (!wx) return;
-  let x = x0;
-  drawIcon(m, wx.icon, x, y, now);
-  x += ICON_W + 4;
-  x += flap.draw(m, 'wx.c', wx.text, x, y, WHITE, now) + 6;
-  x += flap.draw(m, 'wx.t', wx.temp, x, y, tempColor(wx.tempC), now) + 6;
-  wx.extras.forEach((extra, i) => {
-    if (x + textWidth(extra) > x1) return;
-    x += flap.draw(m, `wx.e${i}`, extra, x, y, DIM, now) + 6;
+  drawIcon(m, wx.icon, x0, y, now);
+  const x = x0 + ICON_W + 4;
+
+  const parts = [
+    [wx.text, WHITE],
+    [wx.temp, tempColor(wx.tempC)],
+    ...wx.extras.map((e) => [e, DIM]),
+  ];
+  let text = parts.map(([t]) => t).join('  ');
+  const colours = [];
+  parts.forEach(([t, c], i) => {
+    for (const _ of t) colours.push(c);
+    if (i < parts.length - 1) colours.push(DIM, DIM);
   });
+  const colourAt = (i) => colours[i] ?? DIM;
+  const opts = { clip: [x, x1] };
+
+  if (textWidth(text) <= x1 - x) return void flap.draw(m, 'wx', text, x, y, colourAt, now, opts);
+
+  // Too long: loop it, with a gap before it comes round again.
+  text += WEATHER_GAP;
+  const loop = textWidth(text) + 1;
+  const shift = Math.floor(((now / 1000) * WEATHER_SPEED) % loop);
+  flap.draw(m, 'wx', text, x - shift, y, colourAt, now, opts);
+  m.text(text, x - shift + loop, y, colourAt, opts);
 }
 
 function drawFooter(m, state, slide) {
@@ -173,9 +194,11 @@ function drawFooter(m, state, slide) {
   const clock = `${state.clock24 ? pad2(hours) : hours}${colon}${pad2(date.getMinutes())}${state.clock24 ? '' : date.getHours() < 12 ? 'A' : 'P'}`;
   m.text(clock, PAD, y, WHITE);
 
-  const page = slide && slide.pages > 1 ? `${slide.page + 1}/${slide.pages}` : '';
+  // Position among all the pages being cycled through. Always shown, so the weather
+  // gets whatever space is left rather than the other way round.
+  const page = slide ? `${state.slideIndex + 1}/${state.slideCount}` : '';
   const pageX = m.cols - PAD - 6 - textWidth(page);
-  m.text(page, pageX, y, DIM);
+  m.text(page, pageX, y, [150, 160, 185]);
 
   // Status LED: green = live, amber = last poll failed, red = nothing loaded yet.
   const status = !state.feed.parks.length ? RED : state.feed.error ? [255, 170, 30] : [40, 255, 90];
@@ -183,7 +206,7 @@ function drawFooter(m, state, slide) {
 
   // Weather for whichever park is on screen fills the space in between.
   const park = slide ? state.feed.parks[slide.parkIndex] : null;
-  if (state.weather) drawWeather(m, park, PAD + textWidth(clock) + 10, pageX - 8, y, now);
+  if (state.weather) drawWeather(m, park, PAD + textWidth(clock) + 10, pageX - 8, y, state);
 }
 
 function drawBox(m, lines, y, color) {

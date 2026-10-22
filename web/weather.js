@@ -64,7 +64,7 @@ export function tempColor(c) {
 }
 
 /** Structured summary of a park's weather reading, or null if there isn't one. */
-export function summarise(w) {
+export function summarise(w, { feelsLike = true } = {}) {
   if (!w) return null;
   const [text, icon] = describe(w.code);
   const t = (v) => `${Math.round(v)}C`;
@@ -73,10 +73,10 @@ export function summarise(w) {
     text,
     temp: t(w.temp_c),
     tempC: w.temp_c,
-    // Optional extras, most useful first; the footer shows as many as fit.
+    // Everything after the temperature; the footer scrolls it if it doesn't all fit.
     extras: [
       `WIND ${Math.round(w.wind_mph)}MPH`,
-      `FEELS ${t(w.feels_c)}`,
+      ...(feelsLike ? [`FEELS ${t(w.feels_c)}`] : []),
       ...(w.rain_mm > 0 ? [`RAIN ${w.rain_mm.toFixed(1)}MM`] : []),
     ],
   };

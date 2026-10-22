@@ -24,6 +24,8 @@ pub struct Settings {
     pub theme: String,
     pub gradients: bool,
     pub weather: bool,
+    /// Include the "feels like" temperature in the weather line.
+    pub feels_like: bool,
     pub clock24: bool,
     pub flip: bool,
     pub shine: bool,
@@ -43,6 +45,7 @@ impl Default for Settings {
             theme: "rgb".into(),
             gradients: true,
             weather: true,
+            feels_like: true,
             clock24: true,
             flip: true,
             shine: true,
@@ -64,6 +67,7 @@ pub struct Patch {
     pub theme: Option<String>,
     pub gradients: Option<bool>,
     pub weather: Option<bool>,
+    pub feels_like: Option<bool>,
     pub clock24: Option<bool>,
     pub flip: Option<bool>,
     pub shine: Option<bool>,
@@ -71,7 +75,7 @@ pub struct Patch {
 }
 
 const LIST_KEYS: [&str; 2] = ["parks", "show"];
-const BOOL_KEYS: [&str; 6] = ["show_closed", "gradients", "weather", "clock24", "flip", "shine"];
+const BOOL_KEYS: [&str; 7] = ["show_closed", "gradients", "weather", "feels_like", "clock24", "flip", "shine"];
 
 fn parse_bool(v: &str) -> Option<bool> {
     match v.to_ascii_lowercase().as_str() {
@@ -168,6 +172,7 @@ impl Settings {
         next.show_closed = p.show_closed.unwrap_or(next.show_closed);
         next.gradients = p.gradients.unwrap_or(next.gradients);
         next.weather = p.weather.unwrap_or(next.weather);
+        next.feels_like = p.feels_like.unwrap_or(next.feels_like);
         next.clock24 = p.clock24.unwrap_or(next.clock24);
         next.flip = p.flip.unwrap_or(next.flip);
         next.shine = p.shine.unwrap_or(next.shine);
@@ -187,9 +192,9 @@ mod tests {
     #[test]
     fn applies_pairs() {
         let mut s = Settings::default();
-        let p = Patch::from_pairs(&pairs(&[("dwell", "12"), ("parks", "thorpe-park, alton-towers"), ("show_closed", "on"), ("theme", "amber")])).unwrap();
+        let p = Patch::from_pairs(&pairs(&[("dwell", "12"), ("parks", "thorpe-park, alton-towers"), ("show_closed", "on"), ("theme", "amber"), ("feels_like", "off")])).unwrap();
         s.apply(p).unwrap();
-        assert_eq!((s.dwell, s.show_closed, s.theme.as_str()), (12, true, "amber"));
+        assert_eq!((s.dwell, s.show_closed, s.theme.as_str(), s.feels_like), (12, true, "amber", false));
         assert_eq!(s.parks, ["thorpe-park", "alton-towers"]);
     }
 

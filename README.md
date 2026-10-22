@@ -67,7 +67,7 @@ values are errors, so typos are caught at startup. `--print-config` shows what's
 | `dwell` | seconds each page stays up |
 | `show_closed` | include closed rides |
 | `interval` | seconds between polls |
-| `brightness`, `theme`, `gradients`, `weather`, `clock24`, `flip`, `shine`, `cols` | display options (used by the web display now, and by the LED matrix later) |
+| `brightness`, `theme`, `gradients`, `weather`, `feels_like`, `clock24`, `flip`, `shine`, `cols` | display options (used by the web display now, and by the LED matrix later) |
 
 On the command line, `-s KEY=VALUE` sets any of them (`-s dwell=10 -s theme=amber`), and `-S`, `-a`
 and `-i` are shorthands for `show`, `show_closed` and `interval`. Server options are `-b/--bind`,
@@ -91,13 +91,15 @@ open. Without a token anyone who can reach the port can change settings, so leav
 
 The `web` part serves a display that looks like an RGB LED matrix: text resolves like a split-flap board,
 long names scroll, wait bars glide, arrows show which way a wait last moved, and the footer shows the
-current weather for the park on screen. Press `s` (or the Settings link under the board) for a settings
+current weather for the park on screen (it scrolls if it's too long for the space, and `feels_like`
+turns the "feels like" temperature off), and the overall page number (e.g. 4/9, counting every park) stays
+in the corner. Press `s` (or the Settings link under the board) for a settings
 menu drawn on the matrix, `p` to choose parks and `r` to choose ride groups.
 
 The page starts from the server's settings. Changes made in a browser are remembered in that browser (and
 in the URL, so a tuned board can be bookmarked), and only for settings that viewer changed; the rest keep
 following the server. URL parameters: `parks`, `show`, `park`, `theme`, `dwell`, `brightness`, `cols`,
-`gradients`, `weather`, `clock24`, `flip`, `shine`, `closed`, where `park=all` and `show=all` mean
+`gradients`, `weather`, `feels_like`, `clock24`, `flip`, `shine`, `closed`, where `park=all` and `show=all` mean
 "everything". Add `?demo` for made-up queues when the parks are shut.
 
 | Key | Action |
@@ -113,7 +115,7 @@ following the server. URL parameters: `parks`, `show`, `park`, `theme`, `dwell`,
 ## Terminal display (`led`)
 
 Shows each chosen park in a panel, and takes turns when more are chosen than fit on screen. It redraws
-only when data, settings or the clock change. Keys: `q` quit, `r` refresh now, `a` show or hide closed
+only when data, settings or the clock change, and always shows which screen of parks it's on. Keys: `q` quit, `r` refresh now, `a` show or hide closed
 rides.
 
 ## Credit

@@ -23,6 +23,7 @@ export const SCHEMA = [
   { key: 'show', label: 'RIDE GROUPS', kind: 'list', def: [], fmt: (v) => (v.length ? `${v.length} CHOSEN` : 'ALL RIDES') },
   { key: 'park', label: 'SHOW PARK', kind: 'enum', options: (s) => [null, ...s.parks], def: null, fmt: (v, s) => (v ? s.feed.nameOf(v).toUpperCase() : 'ALL SELECTED') },
   { key: 'weather', label: 'WEATHER', kind: 'bool', def: true, fmt: ON_OFF },
+  { key: 'feelsLike', param: 'feels_like', label: 'FEELS LIKE', kind: 'bool', def: true, fmt: ON_OFF },
   { key: 'clock24', label: 'CLOCK', kind: 'bool', def: true, fmt: (v) => (v ? '24 HOUR' : '12 HOUR') },
   { key: 'flip', label: 'FLIP TEXT', kind: 'bool', def: true, fmt: ON_OFF },
   { key: 'shine', label: 'SHINE SWEEP', kind: 'bool', def: true, fmt: ON_OFF },
@@ -74,7 +75,7 @@ function stored() {
 }
 
 /** The server's settings, under the names used here. */
-const fromServer = (server) => ({ ...server, showClosed: server?.show_closed });
+const fromServer = (server) => ({ ...server, showClosed: server?.show_closed, feelsLike: server?.feels_like });
 
 // What each setting is when the viewer hasn't changed it: the server's value, else the built-in default.
 let baseline = {};

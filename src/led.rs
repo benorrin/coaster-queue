@@ -201,7 +201,7 @@ fn render(
     panes: &[Pane],
     shows: &str,
     show_closed: bool,
-    page: Option<(usize, usize)>,
+    page: (usize, usize),
     wide: bool,
 ) -> String {
     let (cols, rows) = term_size();
@@ -229,19 +229,21 @@ fn render(
 
     let now = now_secs();
     let age = panes.iter().filter_map(|p| p.fetched_at).max().map(|t| now.saturating_sub(t));
-    let mut foot = format!(
+    let mut left = format!(
         " q quit · r refresh · a closed rides: {} · updated {}",
         if show_closed { "shown" } else { "hidden" },
         age.map_or("never".into(), |a| format!("{a}s ago")),
     );
-    if let Some((i, of)) = page {
-        foot.push_str(&format!(" · page {}/{of}", i + 1));
-    }
     let mut style = DIM;
     if let Some(e) = panes.iter().find_map(|p| p.error.as_ref()) {
-        foot = format!(" fetch failed ({e}) — showing last data · retrying");
+        left = format!(" fetch failed ({e}) — showing last data · retrying");
         style = RED;
     }
+    // The page counter is always shown; it's the message beside it that gets cut to fit.
+    let (current, total) = page;
+    let counter = format!(" page {}/{} ", current + 1, total);
+    let room = cols.saturating_sub(counter.chars().count());
+    let foot = format!("{}{counter}", fit(&left, room));
     lines.truncate(rows.saturating_sub(1));
     while lines.len() < rows.saturating_sub(1) {
         lines.push(String::new());
@@ -304,7 +306,7 @@ pub fn run(shared: Arc<Shared>) {
         let shown = &panes[(current * per).min(panes.len())..((current + 1) * per).min(panes.len())];
 
         let shows = settings.show.join(", ");
-        let frame = render(shown, &shows, settings.show_closed, (screens > 1).then_some((current, screens)), wide);
+        let frame = render(shown, &shows, settings.show_closed, (current, screens), wide);
         if frame != last_frame {
             let mut out = io::stdout().lock();
             let _ = out.write_all(frame.as_bytes());

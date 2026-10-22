@@ -20,6 +20,7 @@ brightness = 1.0                          # 0.1-1.0
 theme = "rgb"                             # rgb, amber, green, ice, rainbow
 gradients = true
 weather = true
+feels_like = true                         # include "feels like" in the weather line
 clock24 = true
 flip = true
 shine = true
