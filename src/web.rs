@@ -1,4 +1,4 @@
-use crate::queue::{fetch, Ride, PARKS};
+use crate::queue::{fetch, fetch_weather, Ride, Weather, PARKS};
 use serde::Serialize;
 use std::{
     fs,
@@ -16,6 +16,7 @@ use std::{
 const MAX_CONNECTIONS: usize = 64;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
+const WEATHER_INTERVAL: Duration = Duration::from_secs(600);
 
 /// Everything the site serves, embedded so the binary stays self-contained.
 /// `--web-dir` reads the same files from disk instead, for front-end work.
@@ -46,6 +47,7 @@ struct ParkSnapshot {
     /// Unix seconds of the last successful fetch.
     fetched_at: Option<u64>,
     error: Option<String>,
+    weather: Option<Weather>,
 }
 
 type Cache = Arc<Mutex<Vec<ParkSnapshot>>>;
@@ -86,6 +88,19 @@ fn spawn_poller(cache: Cache, interval: u64) {
             }
         }
         thread::sleep(Duration::from_secs(interval));
+    });
+}
+
+/// Weather changes slowly, so it gets its own, much slower, poll.
+fn spawn_weather_poller(cache: Cache) {
+    thread::spawn(move || loop {
+        for (i, p) in PARKS.iter().enumerate() {
+            // On failure keep showing the previous reading rather than blanking it.
+            if let Ok(w) = fetch_weather(p.0) {
+                cache.lock().unwrap()[i].weather = Some(w);
+            }
+        }
+        thread::sleep(WEATHER_INTERVAL);
     });
 }
 
@@ -167,10 +182,12 @@ pub fn run(cfg: Config) -> io::Result<()> {
                 rides: Vec::new(),
                 fetched_at: None,
                 error: None,
+                weather: None,
             })
             .collect(),
     ));
     spawn_poller(cache.clone(), cfg.interval);
+    spawn_weather_poller(cache.clone());
 
     let listener = TcpListener::bind((cfg.bind.as_str(), cfg.port))?;
     eprintln!("coaster-queue serving on http://{}:{}", cfg.bind, cfg.port);
