@@ -1,0 +1,35 @@
+:root {
+  color-scheme: dark;
+  --bezel: #0b0c10;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+}
+
+body {
+  display: grid;
+  place-items: center;
+  font: 12px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+#board {
+  width: 100vw;
+  height: 100vh;
+  display: block;
+  background: #040508;
+}
+
+/* Slightly darkened edges, like looking at a panel through a hood. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 62%, rgba(0, 0, 0, 0.55) 100%);
+}

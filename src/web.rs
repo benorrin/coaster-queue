@@ -18,17 +18,19 @@ const MAX_HEADER_BYTES: usize = 16 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Everything the site serves, embedded so the binary stays self-contained.
-/// `--web-dir` reads the same names from disk instead, for front-end work.
-const ASSETS: [(&str, &str, &str); 1] = [(
-    "/",
-    "index.html",
-    "text/html; charset=utf-8",
-)];
+/// `--web-dir` reads the same files from disk instead, for front-end work.
+const ASSETS: &[(&str, &str, &str)] = &[
+    ("/", "text/html; charset=utf-8", include_str!("../web/index.html")),
+    ("/style.css", "text/css; charset=utf-8", include_str!("../web/style.css")),
+    ("/app.js", "text/javascript; charset=utf-8", include_str!("../web/app.js")),
+    ("/led.js", "text/javascript; charset=utf-8", include_str!("../web/led.js")),
+    ("/font.js", "text/javascript; charset=utf-8", include_str!("../web/font.js")),
+];
 
-fn embedded(file: &str) -> Option<&'static str> {
-    match file {
-        "index.html" => Some(include_str!("../web/index.html")),
-        _ => None,
+fn disk_name(path: &str) -> &str {
+    match path {
+        "/" => "index.html",
+        p => p.trim_start_matches('/'),
     }
 }
 
@@ -136,12 +138,12 @@ fn handle(mut stream: TcpStream, cache: &Cache, cfg: &Config) -> io::Result<()> 
         }
         "/healthz" => respond(&mut stream, "200 OK", "text/plain", b"ok", head_only),
         _ => {
-            let Some((_, file, mime)) = ASSETS.iter().find(|a| a.0 == path) else {
+            let Some((_, mime, embedded)) = ASSETS.iter().find(|a| a.0 == path) else {
                 return respond(&mut stream, "404 Not Found", "text/plain", b"not found", head_only);
             };
             let body = match &cfg.web_dir {
-                Some(dir) => fs::read(dir.join(file)).ok(),
-                None => embedded(file).map(|s| s.as_bytes().to_vec()),
+                Some(dir) => fs::read(dir.join(disk_name(path))).ok(),
+                None => Some(embedded.as_bytes().to_vec()),
             };
             match body {
                 Some(b) => respond(&mut stream, "200 OK", mime, &b, head_only),
