@@ -1,7 +1,7 @@
 mod queue;
 mod web;
 
-use queue::{fetch, Ride, PARKS};
+use queue::{default_parks, fetch, fetch_parks, Park, Ride};
 use std::{
     env,
     io::{self, Write},
@@ -83,13 +83,13 @@ struct ParkState {
 
 type FetchResult = (usize, Result<Vec<Ride>, String>);
 
-fn refresh(states: &mut [ParkState], parks: &[(&str, &str, u32)], tx: &mpsc::Sender<FetchResult>) {
+fn refresh(states: &mut [ParkState], parks: &[Park], tx: &mpsc::Sender<FetchResult>) {
     for (i, st) in states.iter_mut().enumerate() {
         if st.in_flight {
             continue;
         }
         st.in_flight = true;
-        let (tx, id) = (tx.clone(), parks[i].2);
+        let (tx, id) = (tx.clone(), parks[i].id);
         thread::spawn(move || {
             let _ = tx.send((i, fetch(id)));
         });
@@ -213,7 +213,7 @@ fn panel(name: &str, st: &ParkState, w: usize, h: usize, show_closed: bool) -> V
 }
 
 fn render(
-    parks: &[(&str, &str, u32)],
+    parks: &[Park],
     states: &[ParkState],
     show_closed: bool,
     next_poll: Instant,
@@ -228,7 +228,7 @@ fn render(
     if n > 1 && cols >= WIDE_LAYOUT_MIN_COLS {
         let widths: Vec<usize> = (0..n).map(|i| cols / n + usize::from(i < cols % n)).collect();
         let panels: Vec<Vec<String>> = (0..n)
-            .map(|i| panel(parks[i].1, &states[i], widths[i], body_h, show_closed))
+            .map(|i| panel(&parks[i].name, &states[i], widths[i], body_h, show_closed))
             .collect();
         for r in 0..body_h {
             lines.push(panels.iter().map(|p| p[r].as_str()).collect::<String>());
@@ -236,7 +236,7 @@ fn render(
     } else {
         let each = body_h / n;
         for i in 0..n {
-            lines.extend(panel(parks[i].1, &states[i], cols, each, show_closed));
+            lines.extend(panel(&parks[i].name, &states[i], cols, each, show_closed));
         }
     }
 
@@ -268,7 +268,7 @@ fn serve(args: impl Iterator<Item = String>) {
     let mut cfg = web::Config {
         bind: "127.0.0.1".into(),
         port: 8080,
-        interval: 30,
+        interval: 60,
         web_dir: None,
     };
     let mut args = args;
@@ -287,7 +287,7 @@ fn serve(args: impl Iterator<Item = String>) {
                     process::exit(2);
                 })
             }
-            "-i" | "--interval" => cfg.interval = value("--interval").parse().unwrap_or(30).max(10),
+            "-i" | "--interval" => cfg.interval = value("--interval").parse().unwrap_or(60).max(10),
             "--web-dir" => cfg.web_dir = Some(value("--web-dir").into()),
             "-h" | "--help" => {
                 println!("usage: coaster-queue serve [-b|--bind ADDR] [-p|--port PORT] [-i|--interval SECS]");
@@ -307,13 +307,38 @@ fn serve(args: impl Iterator<Item = String>) {
     }
 }
 
+/// The parks queue-times knows in the UK, falling back to the built-in two if it can't be reached.
+fn directory() -> Vec<Park> {
+    fetch_parks().unwrap_or_else(|e| {
+        eprintln!("warning: couldn't load the park list ({e}); only Alton Towers and Thorpe Park are available");
+        default_parks()
+    })
+}
+
+/// Match a command-line name against park slugs: exactly, or as the start of exactly one.
+fn find_park(directory: &[Park], name: &str) -> Result<Park, String> {
+    let name = name.to_lowercase();
+    if let Some(p) = directory.iter().find(|p| p.slug == name) {
+        return Ok(p.clone());
+    }
+    let matches: Vec<&Park> = directory.iter().filter(|p| p.slug.starts_with(&name)).collect();
+    match matches.as_slice() {
+        [one] => Ok((*one).clone()),
+        [] => Err(format!("unknown park: {name} (see --list)")),
+        many => Err(format!(
+            "{name} matches several parks: {}",
+            many.iter().map(|p| p.slug.as_str()).collect::<Vec<_>>().join(", ")
+        )),
+    }
+}
+
 fn main() {
     let mut raw = env::args().skip(1).peekable();
     if raw.peek().map(String::as_str) == Some("serve") {
         raw.next();
         return serve(raw);
     }
-    let (mut selected, mut interval, mut show_closed) = (Vec::new(), 30u64, false);
+    let (mut names, mut interval, mut show_closed) = (Vec::new(), 30u64, false);
     let mut args = raw;
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -321,24 +346,41 @@ fn main() {
             "-i" | "--interval" => {
                 interval = args.next().and_then(|s| s.parse().ok()).unwrap_or(30).max(10)
             }
+            "-l" | "--list" => {
+                for p in directory() {
+                    println!("{:<32} {}", p.slug, p.name);
+                }
+                return;
+            }
             "-h" | "--help" => {
-                println!("usage: coaster-queue [alton] [thorpe] [-a|--all] [-i|--interval SECS]");
+                println!("usage: coaster-queue [PARK...] [-a|--all] [-i|--interval SECS]");
+                println!("       coaster-queue --list");
                 println!("       coaster-queue serve --help");
+                println!("PARK is a name from --list, or the start of one (e.g. alton, chess); default: alton thorpe");
                 println!("keys:  q quit · r refresh now · a toggle closed rides");
                 return;
             }
-            other => match PARKS.iter().find(|p| p.0 == other) {
-                Some(p) => selected.push(*p),
-                None => {
-                    eprintln!("unknown argument: {other}");
-                    process::exit(2);
-                }
-            },
+            other if other.starts_with('-') => {
+                eprintln!("unknown argument: {other}");
+                process::exit(2);
+            }
+            other => names.push(other.to_string()),
         }
     }
-    if selected.is_empty() {
-        selected = PARKS.to_vec();
-    }
+    let selected = if names.is_empty() {
+        default_parks()
+    } else {
+        let directory = directory();
+        names
+            .iter()
+            .map(|n| {
+                find_park(&directory, n).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    process::exit(2);
+                })
+            })
+            .collect()
+    };
 
     let mut states: Vec<ParkState> = selected.iter().map(|_| ParkState::default()).collect();
     let (tx, rx) = mpsc::channel::<FetchResult>();

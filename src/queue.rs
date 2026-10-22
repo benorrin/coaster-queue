@@ -1,10 +1,84 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-pub const PARKS: [(&str, &str, u32); 2] = [
-    ("alton", "Alton Towers", 1),
-    ("thorpe", "Thorpe Park", 2),
+/// A park on queue-times.com.
+#[derive(Clone)]
+pub struct Park {
+    /// URL-safe name, e.g. "alton-towers"; how parks are referred to on the command line and web.
+    pub slug: String,
+    pub name: String,
+    /// queue-times.com park id.
+    pub id: u32,
+    pub lat: f64,
+    pub lon: f64,
+}
+
+/// Used when the park directory can't be fetched: name, queue-times id, latitude, longitude.
+const BUILT_IN: [(&str, u32, f64, f64); 2] = [
+    ("Alton Towers", 1, 52.9871, -1.8872),
+    ("Thorpe Park", 2, 51.4034, -0.5130),
 ];
+
+/// The two parks shown when none are asked for.
+pub fn default_parks() -> Vec<Park> {
+    BUILT_IN
+        .iter()
+        .map(|&(name, id, lat, lon)| Park { slug: slugify(name), name: name.into(), id, lat, lon })
+        .collect()
+}
+
+pub fn slugify(name: &str) -> String {
+    let mut out = String::new();
+    for c in name.chars().flat_map(char::to_lowercase) {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+        } else if !out.ends_with('-') && !out.is_empty() {
+            out.push('-');
+        }
+    }
+    out.trim_end_matches('-').to_string()
+}
+
+/// Countries queue-times uses for the UK's nations.
+const UK_COUNTRIES: [&str; 5] = ["England", "Scotland", "Wales", "Northern Ireland", "United Kingdom"];
+
+#[derive(Deserialize)]
+struct Group {
+    parks: Vec<DirectoryPark>,
+}
+
+#[derive(Deserialize)]
+struct DirectoryPark {
+    id: u32,
+    name: String,
+    country: String,
+    latitude: String,
+    longitude: String,
+}
+
+/// Every UK park queue-times knows about, sorted by name.
+pub fn fetch_parks() -> Result<Vec<Park>, String> {
+    let groups: Vec<Group> = ureq::get("https://queue-times.com/parks.json")
+        .timeout(Duration::from_secs(10))
+        .call()
+        .map_err(|e| e.to_string())?
+        .into_json()
+        .map_err(|e| e.to_string())?;
+    let mut parks: Vec<Park> = groups
+        .into_iter()
+        .flat_map(|g| g.parks)
+        .filter(|p| UK_COUNTRIES.contains(&p.country.as_str()))
+        .map(|p| Park {
+            slug: slugify(&p.name),
+            lat: p.latitude.parse().unwrap_or(0.0),
+            lon: p.longitude.parse().unwrap_or(0.0),
+            name: p.name,
+            id: p.id,
+        })
+        .collect();
+    parks.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(parks)
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Ride {
@@ -45,14 +119,6 @@ pub fn fetch(id: u32) -> Result<Vec<Ride>, String> {
 
 // ---- weather -----------------------------------------------------------
 
-/// Where each park is, for the weather lookup.
-pub fn location(slug: &str) -> (f64, f64) {
-    match slug {
-        "alton" => (52.9871, -1.8872),
-        _ => (51.4034, -0.5130), // thorpe
-    }
-}
-
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Weather {
     #[serde(alias = "temperature_2m")]
@@ -74,8 +140,7 @@ struct WeatherResponse {
 }
 
 /// Current conditions from Open-Meteo (free, no key; CC BY 4.0).
-pub fn fetch_weather(slug: &str) -> Result<Weather, String> {
-    let (lat, lon) = location(slug);
+pub fn fetch_weather(lat: f64, lon: f64) -> Result<Weather, String> {
     let url = format!(
         "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}\
          &current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation\
