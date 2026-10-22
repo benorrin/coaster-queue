@@ -1,0 +1,15 @@
+[package]
+name = "merlin-queue"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+ureq = { version = "2", default-features = false, features = ["json", "tls"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
