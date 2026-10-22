@@ -1,0 +1,17 @@
+{
+  "lands": [
+    {"id": 10, "name": "Thrills",
+     "rides": [
+       {"id": 1, "name": "Nemesis", "is_open": true, "wait_time": 25, "last_updated": "2026-07-01T10:00:00.000Z"},
+       {"id": 2, "name": "Oblivion", "is_open": false, "wait_time": 0, "last_updated": "2026-07-01T10:00:00.000Z"}
+     ]},
+    {"id": 11, "name": "Family",
+     "rides": [
+       {"id": 3, "name": "Carousel", "is_open": true, "wait_time": 5, "last_updated": "2026-07-01T10:00:00.000Z"},
+       {"id": 4, "name": "Aardvark Express", "is_open": true, "wait_time": 25, "last_updated": "2026-07-01T10:00:00.000Z"}
+     ]}
+  ],
+  "rides": [
+    {"id": 5, "name": "Monorail", "is_open": true, "wait_time": 40, "last_updated": "2026-07-01T10:00:00.000Z"}
+  ]
+}

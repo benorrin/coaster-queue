@@ -1,13 +1,6 @@
-mod config;
-mod groups;
-mod led;
-mod queue;
-mod settings;
-mod store;
-mod web;
-
-use config::{Command, Config};
-use groups::Groups;
+use coaster_queue::config::{self, Command, Config};
+use coaster_queue::groups::Groups;
+use coaster_queue::{led, queue, store, web};
 use std::{env, process, thread};
 
 /// Report a configuration problem and exit.

@@ -1,7 +1,7 @@
 //! Clients for the two upstream services, queue-times.com (ride waits and the park
 //! list) and Open-Meteo (weather), plus the small `Park` and `Ride` types they feed.
 
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::{sync::OnceLock, time::Duration};
 
 // ---- HTTP -------------------------------------------------------------------
@@ -13,15 +13,15 @@ fn agent() -> &'static ureq::Agent {
     AGENT.get_or_init(|| ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build())
 }
 
-/// GET `url` and decode the JSON body, flattening any failure to a message.
-fn get_json<T: DeserializeOwned>(url: &str) -> Result<T, String> {
-    agent().get(url).call().map_err(|e| e.to_string())?.into_json().map_err(|e| e.to_string())
+/// GET `url` and return the body, flattening any failure to a message.
+fn get_body(url: &str) -> Result<String, String> {
+    agent().get(url).call().map_err(|e| e.to_string())?.into_string().map_err(|e| e.to_string())
 }
 
 // ---- parks ------------------------------------------------------------------
 
 /// A park on queue-times.com.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Park {
     /// URL-safe name, e.g. "alton-towers"; how parks are referred to on the command line and web.
     pub slug: String,
@@ -60,9 +60,14 @@ pub fn slugify(name: &str) -> String {
     out.trim_end_matches('-').to_string()
 }
 
-/// Every UK park queue-times knows about, sorted by name. Its park list is grouped by
-/// company, which is flattened away here.
+/// Every UK park queue-times knows about, sorted by name.
 pub fn fetch_parks() -> Result<Vec<Park>, String> {
+    parse_parks(&get_body("https://queue-times.com/parks.json")?)
+}
+
+/// Decode queue-times' park list, which is grouped by company; that grouping is flattened
+/// away and only UK parks are kept.
+pub fn parse_parks(body: &str) -> Result<Vec<Park>, String> {
     #[derive(Deserialize)]
     struct Company {
         parks: Vec<Entry>,
@@ -76,7 +81,7 @@ pub fn fetch_parks() -> Result<Vec<Park>, String> {
         longitude: String,
     }
 
-    let companies: Vec<Company> = get_json("https://queue-times.com/parks.json")?;
+    let companies: Vec<Company> = serde_json::from_str(body).map_err(|e| e.to_string())?;
     let mut parks: Vec<Park> = companies
         .into_iter()
         .flat_map(|c| c.parks)
@@ -123,7 +128,7 @@ pub fn find_park(directory: &[Park], name: &str) -> Result<Park, String> {
 
 // ---- queue times ------------------------------------------------------------
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Ride {
     pub name: String,
     pub is_open: bool,
@@ -135,6 +140,11 @@ pub struct Ride {
 
 /// Current waits for every ride in a park: open rides first, longest wait first.
 pub fn fetch(park_id: u32) -> Result<Vec<Ride>, String> {
+    parse_queue_times(&get_body(&format!("https://queue-times.com/parks/{park_id}/queue_times.json"))?)
+}
+
+/// Decode a park's queue-times response into one list of rides, each tagged with its land.
+pub fn parse_queue_times(body: &str) -> Result<Vec<Ride>, String> {
     #[derive(Deserialize)]
     struct Land {
         name: String,
@@ -147,7 +157,7 @@ pub fn fetch(park_id: u32) -> Result<Vec<Ride>, String> {
         rides: Vec<Ride>,
     }
 
-    let resp: Response = get_json(&format!("https://queue-times.com/parks/{park_id}/queue_times.json"))?;
+    let resp: Response = serde_json::from_str(body).map_err(|e| e.to_string())?;
     let mut rides = resp.rides;
     for land in resp.lands {
         let name = land.name;
@@ -163,7 +173,7 @@ pub fn fetch(park_id: u32) -> Result<Vec<Ride>, String> {
 
 /// Current conditions. The aliases are Open-Meteo's field names, so this decodes their
 /// response directly; the API serves it under the clearer names.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Weather {
     #[serde(alias = "temperature_2m")]
     pub temp_c: f64,
@@ -180,15 +190,20 @@ pub struct Weather {
 
 /// Current conditions from Open-Meteo (free, no key; CC BY 4.0).
 pub fn fetch_weather(lat: f64, lon: f64) -> Result<Weather, String> {
-    #[derive(Deserialize)]
-    struct Response {
-        current: Weather,
-    }
-
     let url = format!(
         "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}\
          &current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation\
          &wind_speed_unit=mph&timezone=Europe%2FLondon"
     );
-    Ok(get_json::<Response>(&url)?.current)
+    parse_weather(&get_body(&url)?)
+}
+
+/// Decode an Open-Meteo forecast response into its current conditions.
+pub fn parse_weather(body: &str) -> Result<Weather, String> {
+    #[derive(Deserialize)]
+    struct Response {
+        current: Weather,
+    }
+
+    Ok(serde_json::from_str::<Response>(body).map_err(|e| e.to_string())?.current)
 }

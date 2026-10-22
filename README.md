@@ -121,7 +121,7 @@ rides.
 ## Development
 
 ```
-cargo test                          # unit tests
+cargo test                          # all tests (no network needed)
 cargo clippy                        # lints
 cargo run -- -r web --web-dir web   # serve the web display from disk, so edits show on refresh
 ```
@@ -130,7 +130,7 @@ How it's laid out:
 
 | Rust (`src/`) | |
 | --- | --- |
-| `main.rs` | starts the parts that were asked for |
+| `main.rs`, `lib.rs` | `main.rs` starts the parts that were asked for; everything else is in the library, so `tests/` can use it |
 | `config.rs` | command line and config file |
 | `settings.rs` | the settings and their validation (shared by file, flags and API) |
 | `groups.rs`, `groups.toml` | ride groups and the built-in categories |
@@ -138,6 +138,18 @@ How it's laid out:
 | `queue.rs` | clients for queue-times.com and Open-Meteo |
 | `led.rs` | the main display (terminal for now) |
 | `web.rs` | the HTTP server: API and web display files |
+
+Tests are kept out of the code they test, and are only compiled by `cargo test`, never into the
+release binary:
+
+| Tests | |
+| --- | --- |
+| `src/<module>/tests.rs` | unit tests, one file per module (e.g. `src/store/tests.rs`), pulled in by `#[cfg(test)] mod tests;`. Being inside the module they can test its private functions |
+| `tests/api.rs` | the HTTP server end to end, on a real socket |
+| `tests/cli.rs` | the real binary: exit codes, output, how flags and the config file combine |
+| `tests/upstream.rs` | decoding queue-times and Open-Meteo responses, from the saved copies in `tests/fixtures/` |
+
+When a bug is fixed, add a test for it to whichever of these is closest, with a comment saying what went wrong.
 
 | Web display (`web/`) | |
 | --- | --- |

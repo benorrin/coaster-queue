@@ -379,3 +379,6 @@ pub fn run(shared: &Shared) {
     }
     shared.quit.store(true, Ordering::Relaxed);
 }
+
+#[cfg(test)]
+mod tests;
