@@ -1,4 +1,5 @@
 mod queue;
+mod web;
 
 use queue::{fetch, Ride, PARKS};
 use std::{
@@ -263,9 +264,57 @@ fn render(
     frame
 }
 
+fn serve(args: impl Iterator<Item = String>) {
+    let mut cfg = web::Config {
+        bind: "127.0.0.1".into(),
+        port: 8080,
+        interval: 30,
+        web_dir: None,
+    };
+    let mut args = args;
+    while let Some(a) = args.next() {
+        let mut value = |name: &str| {
+            args.next().unwrap_or_else(|| {
+                eprintln!("{name} needs a value");
+                process::exit(2);
+            })
+        };
+        match a.as_str() {
+            "-b" | "--bind" => cfg.bind = value("--bind"),
+            "-p" | "--port" => {
+                cfg.port = value("--port").parse().unwrap_or_else(|_| {
+                    eprintln!("--port needs a number");
+                    process::exit(2);
+                })
+            }
+            "-i" | "--interval" => cfg.interval = value("--interval").parse().unwrap_or(30).max(10),
+            "--web-dir" => cfg.web_dir = Some(value("--web-dir").into()),
+            "-h" | "--help" => {
+                println!("usage: merlin-queue serve [-b|--bind ADDR] [-p|--port PORT] [-i|--interval SECS]");
+                println!("                          [--web-dir DIR]");
+                println!("serves the LED board at http://ADDR:PORT (default 127.0.0.1:8080)");
+                return;
+            }
+            other => {
+                eprintln!("unknown argument: {other}");
+                process::exit(2);
+            }
+        }
+    }
+    if let Err(e) = web::run(cfg) {
+        eprintln!("server error: {e}");
+        process::exit(1);
+    }
+}
+
 fn main() {
+    let mut raw = env::args().skip(1).peekable();
+    if raw.peek().map(String::as_str) == Some("serve") {
+        raw.next();
+        return serve(raw);
+    }
     let (mut selected, mut interval, mut show_closed) = (Vec::new(), 30u64, false);
-    let mut args = env::args().skip(1);
+    let mut args = raw;
     while let Some(a) = args.next() {
         match a.as_str() {
             "-a" | "--all" => show_closed = true,
@@ -274,6 +323,7 @@ fn main() {
             }
             "-h" | "--help" => {
                 println!("usage: merlin-queue [alton] [thorpe] [-a|--all] [-i|--interval SECS]");
+                println!("       merlin-queue serve --help");
                 println!("keys:  q quit · r refresh now · a toggle closed rides");
                 return;
             }

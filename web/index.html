@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Merlin Queue</title>
+</head>
+<body>
+<pre id="out">loading…</pre>
+<script>
+fetch('/api/queues').then(r => r.json()).then(d => {
+  document.getElementById('out').textContent = JSON.stringify(d, null, 2);
+});
+</script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 pub const PARKS: [(&str, &str, u32); 2] = [
@@ -6,7 +6,7 @@ pub const PARKS: [(&str, &str, u32); 2] = [
     ("thorpe", "Thorpe Park", 2),
 ];
 
-#[derive(Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Ride {
     pub name: String,
     pub is_open: bool,
