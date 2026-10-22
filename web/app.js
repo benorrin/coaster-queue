@@ -1,18 +1,24 @@
-import { Matrix, hsv } from './led.js';
+import { Matrix } from './led.js';
+import { Feed } from './data.js';
+import { drawBoard } from './board.js';
 
-const matrix = new Matrix(document.getElementById('board'));
+const params = new URLSearchParams(location.search);
+const matrix = new Matrix(document.getElementById('board'), 200);
 addEventListener('resize', () => matrix.resize());
 
-// Placeholder pattern until the board is wired to live data.
-function frame(t) {
+const state = {
+  feed: new Feed({ demo: params.has('demo') }),
+  showClosed: false,
+  dwell: 8, // seconds per page
+  slideTime: 0,
+};
+
+let last = performance.now();
+function frame(now) {
+  state.slideTime += (now - last) / 1000;
+  last = now;
   matrix.clear();
-  const { cols, rows } = matrix;
-  for (let x = 0; x < cols; x++) {
-    matrix.rect(x, rows - 3, 1, 2, hsv(x * 3 + t / 20));
-  }
-  const title = 'MERLIN QUEUE';
-  matrix.text(title, 4, 4, (i) => hsv(i * 28 + t / 10), { scale: 2 });
-  matrix.text('LED MATRIX TEST 0123456789', 4, 24, [255, 255, 255]);
+  drawBoard(matrix, state);
   matrix.present();
   requestAnimationFrame(frame);
 }
