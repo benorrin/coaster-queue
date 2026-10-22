@@ -1,0 +1,79 @@
+# Built-in ride groups. Rides are grouped by name and by the land queue-times files
+# them under, so new parks pick up most groups automatically. The lists are curated by
+# hand and will be imperfect; add your own groups, or override these, in your config file
+# (same format) under [groups.NAME].
+#
+# Patterns are case-insensitive and may use * as a wildcard. `include` pulls in other
+# groups, and `parks` limits a group to the given park slugs.
+
+[groups.thrill]
+label = "Thrill rides"
+lands = ["Thrill*", "Thrills", "Coasters"]
+rides = [
+  # Chessington
+  "Croc Drop", "Dragon's Fury", "Rattlesnake", "Vampire",
+  # Legoland Windsor
+  "Fire & Ice Freefall", "Spinning Spider",
+  # Paultons Park
+  "Drakon", "Raven", "Velociraptor", "Cyclonator", "Vild Swing",
+]
+
+[groups.family]
+label = "Family rides"
+lands = ["Family*"]
+rides = [
+  "ZUFARI", "Tiger Rock", "Mandrill Mayhem", "Mamba Strike", "Ostrich Stampede",
+  "The Gruffalo River Ride Adventure", "Sea Dragons",
+  "The Dragon", "Flight of the Sky Lion", "Laser Raiders", "Pirate Falls Treasure Quest",
+  "LEGO NINJAGO The Ride", "Hydra's Challenge", "Thunder Blazer", "Aero Nomad", "Desert Chase",
+  "Minifigure Speedway", "Jolly Rocker", "Merlin's Challenge", "Dragon's Apprentice",
+  "Boulder Dash", "Dino Chase", "Flight of the Pterosaur", "Storm Chaser",
+  "Octonauts Rollercoaster Adventure", "Gangsta Granny: The Ride",
+  "Griffin's Galleon", "Blue Barnacle", "Seastorm", "AMAZU: Treetop Adventure",
+  "Pirates of Zanzibar", "Peter Rabbit Adventure",
+  "LEGO City Deep Sea Adventure", "Destiny's Bounty", "Fire Academy",
+  "The Dinosaur Tour Co.", "Windmill Towers",
+]
+
+[groups.kids]
+label = "Little ones"
+lands = ["Kids*", "Nickelodeon", "CBeebies*", "DUPLO*", "*PAW Patrol*", "Peppa Pig*", "Critter Creek", "Adventure Point"]
+rides = [
+  "Children's Planet", "Cat-O-Pillar Coaster", "Canopy Capers", "Treetop Hoppers", "Jungle Rangers", "Splish Splosh",
+  "Autumn's Riding Adventure", "Scarab Bouncers", "Balloon School", "Coastguard HQ", "LEGO City Driving School",
+  "Al's Auto Academy", "Farmyard Flyer", "Trekking Tractors",
+]
+
+[groups.water]
+label = "Water rides"
+rides = [
+  "*rapids*", "*splash*", "*river*", "*falls*", "*flume*", "*boat*",
+  "Tidal Wave", "Depth Charge", "Storm Surge", "Drench Towers", "Barrel Bail Out!", "Trawler Trouble",
+]
+
+[groups.transport]
+label = "Transport"
+lands = ["Transport"]
+rides = [
+  "*monorail*", "Skyride*", "Hill Train", "Rio Grande Train Ride", "Pleasure Beach Express",
+  "LEGOLAND Express", "DUPLO Express", "Grandpa Pig's Little Train", "People Mover", "Daktari Express",
+]
+
+[groups.dark-rides]
+label = "Dark rides"
+rides = [
+  "*ghost train*", "Haunted*", "Hex*", "The Curse at Alton Manor", "Ghostly Manor", "Mischief Mansion",
+  "Tomb Blaster", "Room on the Broom*", "Duel*", "Alice in Wonderland", "Wallace & Gromit's Thrill-o-Matic",
+]
+
+[groups.scare]
+label = "Scare attractions"
+lands = ["Scarefest", "Scare mazes"]
+rides = ["*scare maze*", "*scare zone*", "*fright nights*"]
+
+[groups.extras]
+label = "Shows and extras"
+rides = [
+  "*show*", "*meet & greet*", "*photo*", "*soft play*", "*restaurant*", "*encounter*", "*play area*",
+  "Final Exhibit", "Wanyama Village", "Brick Ice Lolly", "The Gardens", "Something Special Sensory Garden",
+]

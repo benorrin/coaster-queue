@@ -1,4 +1,6 @@
+mod groups;
 mod queue;
+mod settings;
 mod web;
 
 use queue::{default_parks, fetch, fetch_parks, Park, Ride};
