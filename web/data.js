@@ -22,6 +22,7 @@ export class Feed {
   constructor({ demo = false } = {}) {
     this.demo = demo;
     this.parks = [];
+    this.seen = new Map(); // ride key -> { wait, trend } from the previous poll
     this.loadedAt = 0; // ms, last successful poll
     this.error = null;
     this.poll();
@@ -45,6 +46,7 @@ export class Feed {
         })
         .sort((a, b) => b.is_open - a.is_open || b.wait_time - a.wait_time || a.name.localeCompare(b.name)),
     }));
+    this.markTrends(this.parks);
     this.loadedAt = Date.now();
   }
 
@@ -53,12 +55,31 @@ export class Feed {
     try {
       const res = await fetch('/api/queues', { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      this.parks = await res.json();
+      const parks = await res.json();
+      this.markTrends(parks);
+      this.parks = parks;
       this.loadedAt = Date.now();
       this.error = null;
     } catch (e) {
       this.error = String(e.message || e);
     }
+  }
+
+  /**
+   * Tag each ride with `trend` (+1 up, -1 down) from the last poll where its
+   * wait changed; it sticks until the wait moves again.
+   */
+  markTrends(parks) {
+    const next = new Map();
+    for (const park of parks) {
+      for (const ride of park.rides) {
+        const key = `${park.id}/${ride.name}`;
+        const before = this.seen.get(key);
+        ride.trend = before === undefined ? 0 : ride.wait_time === before.wait ? before.trend : Math.sign(ride.wait_time - before.wait);
+        next.set(key, { wait: ride.wait_time, trend: ride.trend });
+      }
+    }
+    this.seen = next;
   }
 
   /** Seconds since the newest upstream fetch, or null if nothing has loaded. */

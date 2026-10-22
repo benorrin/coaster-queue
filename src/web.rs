@@ -26,6 +26,7 @@ const ASSETS: &[(&str, &str, &str)] = &[
     ("/led.js", "text/javascript; charset=utf-8", include_str!("../web/led.js")),
     ("/data.js", "text/javascript; charset=utf-8", include_str!("../web/data.js")),
     ("/board.js", "text/javascript; charset=utf-8", include_str!("../web/board.js")),
+    ("/fx.js", "text/javascript; charset=utf-8", include_str!("../web/fx.js")),
     ("/font.js", "text/javascript; charset=utf-8", include_str!("../web/font.js")),
 ];
 

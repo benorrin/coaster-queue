@@ -1,5 +1,9 @@
 import { ADVANCE, normalise, textWidth } from './font.js';
 import { hsv, mix, scale } from './led.js';
+import { Flap, Ease } from './fx.js';
+
+export const flap = new Flap();
+export const ease = new Ease();
 
 // Vertical layout, in dots.
 const HEADER_Y = 2;
@@ -10,6 +14,9 @@ const FOOTER_H = 11;
 const PAD = 3;
 
 const WAIT_TEXT_W = 4 * ADVANCE - 1; // fits "WALK"
+const ARROW_W = 5;
+const SCROLL_SPEED = 30; // dots per second for names that don't fit
+const SCROLL_HOLD = 1.4; // seconds parked at each end
 const MAX_WAIT = 60;
 
 const WHITE = [235, 240, 255];
@@ -48,40 +55,51 @@ export function buildSlides(parks, size, showClosed) {
   return slides;
 }
 
-function fitText(text, width) {
-  const max = Math.floor((width + 1) / ADVANCE);
-  const chars = [...text];
-  return chars.length <= max ? text : chars.slice(0, Math.max(0, max - 1)).join('') + '.';
+/** Horizontal offset for a name wider than its column: park, scroll, park. */
+function scrollOffset(overflow, t) {
+  if (overflow <= 0) return 0;
+  const run = overflow / SCROLL_SPEED;
+  const u = t % (run + 2 * SCROLL_HOLD);
+  return -Math.min(overflow, Math.max(0, (u - SCROLL_HOLD) * SCROLL_SPEED));
 }
 
-function drawBar(m, x, y, w, mins) {
-  const lit = Math.round((Math.min(mins, MAX_WAIT) / MAX_WAIT) * w);
+function drawBar(m, key, x, y, w, mins, now) {
+  const fill = ease.get(key, (Math.min(mins, MAX_WAIT) / MAX_WAIT) * w, now);
   for (let i = 0; i < w; i++) {
     const c = waitColor((i / (w - 1)) * MAX_WAIT);
-    m.rect(x + i, y, 1, 3, i < lit ? c : scale(c, 0.1));
+    const on = Math.max(0, Math.min(1, fill - i));
+    m.rect(x + i, y, 1, 3, mix(scale(c, 0.1), c, on));
   }
 }
 
-function drawRide(m, ride, x0, w, y) {
+function drawRide(m, ride, key, x0, w, y, state) {
+  const { now, slideTime } = state;
   const right = x0 + w - PAD;
   const barW = Math.max(10, Math.min(28, Math.round(w * 0.14)));
   const textX = right - WAIT_TEXT_W;
-  const barX = textX - 4 - barW;
+  const arrowX = textX - ARROW_W - 2;
+  const barX = arrowX - 4 - barW;
   const nameX = x0 + PAD;
-  const name = fitText(normalise(ride.name), barX - nameX - 3);
+  const nameW = barX - nameX - 3;
+  const name = normalise(ride.name);
+  const offset = scrollOffset(textWidth(name) - nameW, slideTime);
+  const nameOpts = { clip: [nameX, nameX + nameW] };
 
   if (!ride.is_open) {
-    m.text(name, nameX, y, DIM);
+    flap.draw(m, `${key}.n`, name, nameX + offset, y, DIM, now, nameOpts);
     const label = 'CLOSED';
     m.text(label, right - textWidth(label), y, scale(RED, 0.55));
     return;
   }
 
-  const c = waitColor(ride.wait_time);
-  m.text(name, nameX, y, WHITE);
-  drawBar(m, barX, y + 2, barW, ride.wait_time);
+  // Long queues breathe so they catch the eye from across the concourse.
+  const pulse = ride.wait_time >= 50 ? 0.75 + 0.25 * Math.sin(now / 170) : 1;
+  const c = scale(waitColor(ride.wait_time), pulse);
+  flap.draw(m, `${key}.n`, name, nameX + offset, y, WHITE, now, nameOpts);
+  drawBar(m, `${key}.b`, barX, y + 2, barW, ride.wait_time, now);
+  if (ride.trend) m.text(ride.trend > 0 ? '▲' : '▼', arrowX, y, ride.trend > 0 ? RED : [40, 255, 90]);
   const label = ride.wait_time === 0 ? 'WALK' : `${ride.wait_time}M`;
-  m.text(label, right - textWidth(label), y, c);
+  flap.draw(m, `${key}.w`, label, right - textWidth(label), y, c, now);
 }
 
 function drawHeader(m, park, accent, x0, w, progress) {
@@ -109,7 +127,7 @@ function drawHeader(m, park, accent, x0, w, progress) {
   }
 }
 
-function drawPanel(m, park, slide, accent, x0, w, progress, showClosed) {
+function drawPanel(m, park, slide, accent, x0, w, progress, state) {
   drawHeader(m, park, accent, x0, w, progress);
   if (!park.fetched_at) {
     m.text(park.error ? 'NO DATA' : 'LOADING', x0 + PAD, ROWS_Y + 2, park.error ? RED : DIM);
@@ -119,22 +137,53 @@ function drawPanel(m, park, slide, accent, x0, w, progress, showClosed) {
     m.text('NO RIDES OPERATING', x0 + PAD, ROWS_Y + 2, DIM);
     return;
   }
-  slide.rides.forEach((ride, i) => drawRide(m, ride, x0, w, ROWS_Y + i * ROW_PITCH));
+  slide.rides.forEach((ride, i) => drawRide(m, ride, `${park.id}.${i}`, x0, w, ROWS_Y + i * ROW_PITCH, state));
 }
 
-function drawFooter(m, state, slide, slides) {
+const TICKER_SPEED = 26; // dots per second
+const TICKER_GAP = '      ***      ';
+
+function tickerText(parks) {
+  const parts = parks
+    .filter((p) => p.fetched_at)
+    .map((p) => {
+      const open = p.rides.filter((r) => r.is_open);
+      if (!open.length) return `${p.name} IS CLOSED`;
+      const avg = Math.round(open.reduce((s, r) => s + r.wait_time, 0) / open.length);
+      const top = open.reduce((a, b) => (b.wait_time > a.wait_time ? b : a));
+      return `${p.name}: ${open.length} OPEN, AVERAGE WAIT ${avg} MINS, LONGEST QUEUE ${top.name} ${top.wait_time} MINS`;
+    });
+  parts.push('POWERED BY QUEUE-TIMES.COM');
+  return normalise(parts.join(TICKER_GAP) + TICKER_GAP);
+}
+
+function drawFooter(m, state, slide) {
+  const { now } = state;
   const y = m.rows - 8;
-  const now = new Date();
-  const colon = now.getSeconds() % 2 === 0 ? ':' : ' ';
+  const date = new Date();
+  const colon = date.getSeconds() % 2 === 0 ? ':' : ' ';
   const pad2 = (n) => String(n).padStart(2, '0');
-  m.text(`${pad2(now.getHours())}${colon}${pad2(now.getMinutes())}`, PAD, y, WHITE);
+  const clock = `${pad2(date.getHours())}${colon}${pad2(date.getMinutes())}`;
+  m.text(clock, PAD, y, WHITE);
 
   const page = slide && slide.pages > 1 ? `${slide.page + 1}/${slide.pages}` : '';
-  m.text(page, m.cols - PAD - 6 - textWidth(page), y, DIM);
+  const pageX = m.cols - PAD - 6 - textWidth(page);
+  m.text(page, pageX, y, DIM);
 
   // Status LED: green = live, amber = last poll failed, red = nothing loaded yet.
   const status = !state.feed.parks.length ? RED : state.feed.error ? [255, 170, 30] : [40, 255, 90];
   m.rect(m.cols - PAD - 3, y + 2, 3, 3, status);
+
+  // Scrolling ticker fills the space between the clock and the page counter.
+  const x0 = PAD + textWidth(clock) + 8;
+  const x1 = pageX - 8;
+  const text = tickerText(state.feed.parks);
+  const loop = textWidth(text) + 1;
+  const shift = Math.floor(((now / 1000) * TICKER_SPEED) % loop);
+  const hue = (i) => scale(hsv(i * 7 - now / 9, 0.8, 1), 0.85);
+  for (let k = 0; k < 2; k++) {
+    m.text(text, x0 - shift + k * loop, y, (i) => hue(i), { clip: [x0, x1] });
+  }
 }
 
 /** Paint one frame of the board into the matrix. */
@@ -147,9 +196,9 @@ export function drawBoard(m, state) {
 
   if (slide) {
     const park = feed.parks[slide.parkIndex];
-    drawPanel(m, park, slide, ACCENTS[slide.parkIndex % ACCENTS.length], 0, m.cols, progress, showClosed);
+    drawPanel(m, park, slide, ACCENTS[slide.parkIndex % ACCENTS.length], 0, m.cols, progress, state);
   } else {
     m.text(feed.error ? 'NO SIGNAL' : 'LOADING', PAD, ROWS_Y + 2, feed.error ? RED : DIM);
   }
-  drawFooter(m, state, slide, slides);
+  drawFooter(m, state, slide);
 }
