@@ -118,6 +118,35 @@ Shows each chosen park in a panel, and takes turns when more are chosen than fit
 only when data, settings or the clock change, and always shows which screen of parks it's on. Keys: `q` quit, `r` refresh now, `a` show or hide closed
 rides.
 
+## Development
+
+```
+cargo test                          # unit tests
+cargo clippy                        # lints
+cargo run -- -r web --web-dir web   # serve the web display from disk, so edits show on refresh
+```
+
+How it's laid out:
+
+| Rust (`src/`) | |
+| --- | --- |
+| `main.rs` | starts the parts that were asked for |
+| `config.rs` | command line and config file |
+| `settings.rs` | the settings and their validation (shared by file, flags and API) |
+| `groups.rs`, `groups.toml` | ride groups and the built-in categories |
+| `store.rs` | the shared data store and the single poller |
+| `queue.rs` | clients for queue-times.com and Open-Meteo |
+| `led.rs` | the main display (terminal for now) |
+| `web.rs` | the HTTP server: API and web display files |
+
+| Web display (`web/`) | |
+| --- | --- |
+| `app.js` | entry point and draw loop |
+| `data.js`, `demo.js` | the feed from the API, and made-up data for `?demo` |
+| `settings.js`, `controls.js` | settings (parse, save, step) and keyboard/touch controls |
+| `board.js`, `overlays.js`, `weather.js` | what's drawn: the board, the menu/picker/help screens, the weather line |
+| `led.js` (WebGL matrix), `font.js`, `fx.js` (effects and themes), `color.js`, `layout.js`, `util.js` | rendering and shared helpers |
+
 ## Credit
 
 Wait times are provided by [Queue-Times.com](https://queue-times.com/) and weather by
