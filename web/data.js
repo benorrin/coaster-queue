@@ -1,5 +1,10 @@
 const POLL_MS = 15000;
 
+const DEMO_WEATHER = {
+  alton: { temp_c: 13.4, feels_c: 11.2, code: 2, wind_mph: 9.3, rain_mm: 0 },
+  thorpe: { temp_c: 17.8, feels_c: 17.1, code: 61, wind_mph: 12.6, rain_mm: 0.4 },
+};
+
 const DEMO_RIDES = {
   alton: [
     ['Nemesis', 35], ['Oblivion', 20], ['The Smiler', 45], ['Wicker Man', 55], ['Galactica', 30],
@@ -38,6 +43,7 @@ export class Feed {
       name: names[id],
       fetched_at: now,
       error: null,
+      weather: DEMO_WEATHER[id],
       rides: rides
         .map(([name, base]) => {
           const was = prev.get(`${id}/${name}`) ?? base;

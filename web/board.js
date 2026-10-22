@@ -1,6 +1,7 @@
 import { ADVANCE, normalise, textWidth } from './font.js';
 import { hsv, mix, scale } from './led.js';
 import { Flap, Ease } from './fx.js';
+import { ICON_W, drawIcon, summarise, tempColor } from './weather.js';
 
 export const flap = new Flap();
 export const ease = new Ease();
@@ -142,21 +143,18 @@ function drawPanel(m, park, slide, accent, x0, w, progress, state) {
   slide.rides.forEach((ride, i) => drawRide(m, ride, `${park.id}.${i}`, x0, w, ROWS_Y + i * ROW_PITCH, state));
 }
 
-const TICKER_SPEED = 26; // dots per second
-const TICKER_GAP = '      ***      ';
-
-function tickerText(parks) {
-  const parts = parks
-    .filter((p) => p.fetched_at)
-    .map((p) => {
-      const open = p.rides.filter((r) => r.is_open);
-      if (!open.length) return `${p.name} IS CLOSED`;
-      const avg = Math.round(open.reduce((s, r) => s + r.wait_time, 0) / open.length);
-      const top = open.reduce((a, b) => (b.wait_time > a.wait_time ? b : a));
-      return `${p.name}: ${open.length} OPEN, AVERAGE WAIT ${avg} MINS, LONGEST QUEUE ${top.name} ${top.wait_time} MINS`;
-    });
-  parts.push('POWERED BY QUEUE-TIMES.COM');
-  return normalise(parts.join(TICKER_GAP) + TICKER_GAP);
+function drawWeather(m, park, x0, x1, y, now) {
+  const wx = summarise(park?.weather);
+  if (!wx) return;
+  let x = x0;
+  drawIcon(m, wx.icon, x, y, now);
+  x += ICON_W + 4;
+  x += flap.draw(m, 'wx.c', wx.text, x, y, WHITE, now) + 6;
+  x += flap.draw(m, 'wx.t', wx.temp, x, y, tempColor(wx.tempC), now) + 6;
+  wx.extras.forEach((extra, i) => {
+    if (x + textWidth(extra) > x1) return;
+    x += flap.draw(m, `wx.e${i}`, extra, x, y, DIM, now) + 6;
+  });
 }
 
 function drawFooter(m, state, slide) {
@@ -176,16 +174,9 @@ function drawFooter(m, state, slide) {
   const status = !state.feed.parks.length ? RED : state.feed.error ? [255, 170, 30] : [40, 255, 90];
   m.rect(m.cols - PAD - 3, y + 2, 3, 3, status);
 
-  // Scrolling ticker fills the space between the clock and the page counter.
-  const x0 = PAD + textWidth(clock) + 8;
-  const x1 = pageX - 8;
-  const text = tickerText(state.feed.parks);
-  const loop = textWidth(text) + 1;
-  const shift = Math.floor(((now / 1000) * TICKER_SPEED) % loop);
-  const hue = (i) => scale(hsv(i * 7 - now / 9, 0.8, 1), 0.85);
-  for (let k = 0; k < 2; k++) {
-    m.text(text, x0 - shift + k * loop, y, (i) => hue(i), { clip: [x0, x1] });
-  }
+  // Weather for whichever park is on screen fills the space in between.
+  const park = slide ? state.feed.parks[slide.parkIndex] : null;
+  drawWeather(m, park, PAD + textWidth(clock) + 10, pageX - 8, y, now);
 }
 
 function drawBox(m, lines, y, color) {

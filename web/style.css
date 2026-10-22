@@ -28,17 +28,17 @@ body {
 
 body.idle { cursor: none; }
 
-#credit {
+#credits {
   flex: none;
   padding: 3px 0 4px;
   text-align: center;
   color: #6f7890;
   font-size: 10px;
-  text-decoration: none;
   transition: color 0.2s;
 }
-#credit:hover { color: #c3cadb; }
-body.idle #credit { color: #3a4152; }
+#credits a { color: inherit; text-decoration: none; }
+#credits a:hover { color: #c3cadb; }
+body.idle #credits { color: #3a4152; }
 
 /* Slightly darkened edges, like looking at a panel through a hood. */
 body::after {
