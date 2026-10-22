@@ -1,6 +1,7 @@
 import { ADVANCE, normalise, textWidth } from './font.js';
 import { hsv, mix, scale } from './led.js';
 import { Flap, Ease } from './fx.js';
+import { SCHEMA, format } from './settings.js';
 import { ICON_W, drawIcon, summarise, tempColor } from './weather.js';
 
 export const flap = new Flap();
@@ -9,8 +10,8 @@ export const ease = new Ease();
 // Vertical layout, in dots.
 const HEADER_Y = 2;
 const RULE_Y = 17;
-const ROWS_Y = 20;
-const ROW_PITCH = 9;
+export const ROWS_Y = 20;
+export const ROW_PITCH = 9;
 const FOOTER_H = 11;
 const PAD = 3;
 
@@ -197,11 +198,46 @@ function drawBox(m, lines, y, color) {
   lines.forEach((l, i) => m.text(l, x + 5, y + 3 + i * ROW_PITCH, WHITE));
 }
 
+const GREEN = [40, 255, 90];
+const CYAN = [40, 200, 255];
+
+/** Settings list; scrolls to keep the selected row visible. */
+function drawMenu(m, state) {
+  const { menu, now } = state;
+  m.text('SETTINGS', PAD, HEADER_Y, (i) => hsv(now / 12 + i * 20, 0.8, 1), { scale: 2 });
+
+  const visible = Math.max(1, Math.floor((m.rows - FOOTER_H - ROWS_Y + 2) / ROW_PITCH));
+  menu.visible = visible;
+  menu.offset = Math.max(0, Math.min(SCHEMA.length - visible, menu.index - Math.floor(visible / 2)));
+
+  const valueX = PAD + 6 + 14 * ADVANCE;
+  for (let row = 0; row < Math.min(visible, SCHEMA.length); row++) {
+    const i = menu.offset + row;
+    const item = SCHEMA[i];
+    const y = ROWS_Y + row * ROW_PITCH;
+    const selected = i === menu.index;
+    const v = state[item.key];
+    const text = format(item, v);
+    // Grey for off rather than red: red nearly vanishes in the monochrome themes.
+    const colour = item.kind === 'bool' && !v ? [150, 155, 170] : item.kind === 'bool' ? GREEN : CYAN;
+
+    if (selected) m.text('>', PAD, y, [255, 170, 30]);
+    m.text(item.label, PAD + 6, y, selected ? WHITE : [150, 160, 185]);
+    if (selected) m.text('<', valueX - 7, y, DIM);
+    m.text(text, valueX, y, selected ? colour : scale(colour, 0.7));
+    if (selected) m.text('>', valueX + textWidth(text) + 1, y, DIM);
+  }
+  if (menu.offset > 0) m.text('▲', m.cols - PAD - 5, ROWS_Y, DIM);
+  if (menu.offset + visible < SCHEMA.length) m.text('▼', m.cols - PAD - 5, ROWS_Y + (visible - 1) * ROW_PITCH, DIM);
+  m.text('ARROWS ADJUST - S CLOSES', PAD, m.rows - 8, DIM, { clip: [0, m.cols - PAD] });
+}
+
 const HELP = [
   ['SPACE', 'PAUSE'],
   ['LEFT RIGHT', 'PAGE'],
   ['UP DOWN', 'BRIGHTNESS'],
   ['T', 'THEME'],
+  ['S', 'SETTINGS MENU'],
   ['G C D W', 'GRADIENTS CLOSED DOTS WEATHER'],
   ['1 2 0', 'ONE PARK OR ALL'],
   ['F', 'FULLSCREEN'],
@@ -227,6 +263,7 @@ function drawHelp(m, now) {
 export function drawBoard(m, state) {
   const { feed, showClosed, slideTime, dwell, now } = state;
   flap.enabled = state.flip;
+  if (state.menu.open) return drawMenu(m, state);
   if (state.help) return drawHelp(m, now);
 
   const size = pageSize(m);

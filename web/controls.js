@@ -1,4 +1,5 @@
-import { byKey, change, format, save } from './settings.js';
+import { ROWS_Y, ROW_PITCH } from './board.js';
+import { SCHEMA, byKey, change, format, save } from './settings.js';
 
 const mod = (n, m) => ((n % m) + m) % m;
 
@@ -6,12 +7,12 @@ export function setupControls({ state, matrix, demo }) {
   const toast = (text) => (state.toast = { text, until: performance.now() + 1600 });
 
   /** Step a setting, apply any side effects and tell the viewer. */
-  function nudge(key, dir = 1) {
+  function nudge(key, dir = 1, quiet = false) {
     const item = byKey(key);
     const before = state[key];
     state[key] = change(item, before, dir);
     applied(key, before);
-    toast(`${item.label} ${format(item, state[key])}`);
+    if (!quiet) toast(`${item.label} ${format(item, state[key])}`);
   }
 
   function applied(key, before) {
@@ -39,7 +40,27 @@ export function setupControls({ state, matrix, demo }) {
     state.pageAge = 0;
   };
 
+  const menu = state.menu;
+  const openMenu = (open = !menu.open) => {
+    menu.open = open;
+    if (open) state.help = false;
+  };
+  const step = (dir) => nudge(SCHEMA[menu.index].key, dir, true);
+
+  // While the menu is open, arrows move and change values instead of paging.
+  const menuActions = {
+    ArrowUp: () => (menu.index = mod(menu.index - 1, SCHEMA.length)),
+    ArrowDown: () => (menu.index = mod(menu.index + 1, SCHEMA.length)),
+    ArrowLeft: () => step(-1),
+    ArrowRight: () => step(1),
+    Enter: () => step(1),
+    ' ': () => step(1),
+    s: () => openMenu(false),
+    Escape: () => openMenu(false),
+  };
+
   const actions = {
+    s: () => openMenu(),
     ' ': () => {
       state.paused = !state.paused;
       toast(state.paused ? 'PAUSED' : 'RESUMED');
@@ -60,14 +81,21 @@ export function setupControls({ state, matrix, demo }) {
       if (document.fullscreenElement) document.exitFullscreen();
       else document.documentElement.requestFullscreen?.().catch(() => {});
     },
-    h: () => (state.help = !state.help),
-    '?': () => (state.help = !state.help),
+    h: () => {
+      openMenu(false);
+      state.help = !state.help;
+    },
+    '?': () => {
+      openMenu(false);
+      state.help = !state.help;
+    },
     Escape: () => (state.help = false),
   };
 
   addEventListener('keydown', (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
-    const act = actions[e.key.length === 1 ? e.key.toLowerCase() : e.key];
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    const act = (menu.open && menuActions[key]) || actions[key];
     if (!act) return;
     e.preventDefault();
     act();
@@ -77,7 +105,18 @@ export function setupControls({ state, matrix, demo }) {
   // Touch and mouse: left third goes back, anywhere else goes forward.
   const board = matrix.canvas;
   board.addEventListener('click', (e) => {
-    turn(e.clientX < board.clientWidth / 3 ? -1 : 1);
+    if (!menu.open) return turn(e.clientX < board.clientWidth / 3 ? -1 : 1);
+    // In the menu: tap above the list to close, or tap a row's left/right half to step it.
+    const dot = matrix.dotAt(e.clientX, e.clientY);
+    const row = Math.floor((dot.y - ROWS_Y) / ROW_PITCH);
+    if (row < 0 || row >= menu.visible) return openMenu(false);
+    menu.index = menu.offset + row;
+    step(dot.x < matrix.cols / 2 ? -1 : 1);
+    save(state, demo);
+  });
+  document.getElementById('settings-btn')?.addEventListener('click', () => {
+    openMenu();
+    save(state, demo);
   });
 
   // Hide the cursor when idle so a kiosk screen stays clean.

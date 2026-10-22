@@ -23,25 +23,32 @@ viewers costs one upstream request per park per interval. The front end is embed
 `--web-dir web` reads it from disk instead while you work on it.
 
 The board pages through each park's open rides, longest wait first. Text resolves like a split-flap
-display, long names scroll, wait bars glide, arrows show which way a wait last moved, and a ticker
-along the bottom summarises each park.
+display, long names scroll, wait bars glide, and arrows show which way a wait last moved. The footer
+shows the current weather for whichever park is on screen (from [Open-Meteo](https://open-meteo.com/),
+refreshed every 10 minutes).
+
+Press `s` (or the Settings link under the board) for the settings menu: page time, theme, brightness,
+dot density, gradients, closed rides, park, weather, 12/24-hour clock, flip text and shine sweep.
+Use the arrow keys, or tap a row's left/right half to step its value. Settings are remembered in the
+browser.
 
 | Key | Action |
 | --- | --- |
 | `space` | pause paging |
 | `←` `→` | previous / next page (or tap the left third / the rest of the screen) |
-| `t` | theme: rgb, amber, green, ice, rainbow |
 | `↑` `↓` | brightness |
-| `d` | dot density |
-| `c` | show closed rides |
+| `s` | settings menu |
+| `t` `g` `c` `d` `w` | theme, gradients, closed rides, dot density, weather |
 | `1` `2` `0` | one park / all parks |
 | `f` | fullscreen |
 | `h` | help |
 
-Settings are kept in the URL, so a tuned board can be bookmarked for a wall-mounted screen:
-`?theme=amber&park=thorpe&dwell=6&brightness=0.8&cols=256&closed=1`. Add `?demo` for made-up queues,
-handy when the parks are shut.
+Settings are also kept in the URL, so a tuned board can be bookmarked for a wall-mounted screen, and
+URL values win over remembered ones:
+`?theme=amber&park=thorpe&dwell=6&brightness=0.8&cols=256&gradients=0&weather=0&clock24=0&closed=1`.
+Add `?demo` for made-up queues, handy when the parks are shut.
 
 ## Credit
 
-Wait times are provided by [Queue-Times.com](https://queue-times.com/); keep the link on the page.
+Wait times are provided by [Queue-Times.com](https://queue-times.com/) and weather by
+[Open-Meteo.com](https://open-meteo.com/) (CC BY 4.0); keep both links on the page.

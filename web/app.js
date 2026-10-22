@@ -17,6 +17,7 @@ const state = {
   feed: new Feed({ demo }),
   paused: false,
   help: false,
+  menu: { open: false, index: 0, offset: 0, visible: 0 },
   toast: null,
   slideTime: 0, // seconds of paging clock; stops while paused
   pageAge: 0, // seconds since the page last changed; drives name scrolling
@@ -30,7 +31,7 @@ let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.25, (now - last) / 1000);
   last = now;
-  if (!state.paused) state.slideTime += dt;
+  if (!state.paused && !state.menu.open) state.slideTime += dt;
   state.pageAge += dt;
   state.now = now;
 

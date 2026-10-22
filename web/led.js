@@ -193,6 +193,14 @@ export class Matrix {
     return textWidth(str, s);
   }
 
+  /** Which dot is under a viewport position (fractional; floor for the cell). */
+  dotAt(clientX, clientY) {
+    const r = this.canvas.getBoundingClientRect();
+    const k = this.canvas.width / r.width;
+    const offY = (this.canvas.height - this.rows * this.pitch) / 2;
+    return { x: ((clientX - r.left) * k) / this.pitch, y: ((clientY - r.top) * k - offY) / this.pitch };
+  }
+
   // ---- output ------------------------------------------------------------
 
   /** Paint `buf` to the canvas. `brightness` is 0-1. */
